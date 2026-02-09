@@ -80,17 +80,34 @@ def symbol(name, full):
         # --- Callers ---
         callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()
         if callers:
-            lines = []
+            # Dedup by source symbol: prefer call > inherits > implements > import
+            _EDGE_PRIORITY = {"call": 0, "inherits": 1, "implements": 2, "import": 3}
+            best = {}
             for c in callers:
+                sid = c["id"]
+                prio = _EDGE_PRIORITY.get(c["edge_kind"], 1)
+                if sid not in best or prio < best[sid][1]:
+                    best[sid] = (c, prio)
+            deduped = [v[0] for v in best.values()]
+            lines = []
+            for c in deduped:
                 edge = format_edge_kind(c["edge_kind"])
                 lines.append(f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}")
-            click.echo(section(f"Callers ({len(callers)}):", lines, budget=0 if full else 15))
+            click.echo(section(f"Callers ({len(deduped)}):", lines, budget=0 if full else 15))
 
         # --- Callees ---
         callees = conn.execute(CALLEES_OF, (s["id"],)).fetchall()
         if callees:
-            lines = []
+            # Dedup by target symbol: prefer call > inherits > implements > import
+            best = {}
             for c in callees:
+                sid = c["id"]
+                prio = _EDGE_PRIORITY.get(c["edge_kind"], 1)
+                if sid not in best or prio < best[sid][1]:
+                    best[sid] = (c, prio)
+            deduped = [v[0] for v in best.values()]
+            lines = []
+            for c in deduped:
                 edge = format_edge_kind(c["edge_kind"])
                 lines.append(f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}")
-            click.echo(section(f"Callees ({len(callees)}):", lines, budget=0 if full else 15))
+            click.echo(section(f"Callees ({len(deduped)}):", lines, budget=0 if full else 15))

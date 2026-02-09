@@ -68,11 +68,14 @@ def health():
         rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
         bn_rows = []
         for r in rows:
-            if (r["betweenness"] or 0) > 0:
+            bw = r["betweenness"] or 0
+            if bw > 0:
+                # Use scientific notation for very small values
+                bw_str = f"{bw:.4f}" if bw >= 0.0001 else f"{bw:.2e}"
                 bn_rows.append([
                     r["name"],
                     abbrev_kind(r["kind"]),
-                    f"{r['betweenness']:.4f}",
+                    bw_str,
                     loc(r["file_path"]),
                 ])
         if bn_rows:

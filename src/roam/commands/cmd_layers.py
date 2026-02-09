@@ -34,8 +34,9 @@ def layers():
         for layer_info in formatted:
             n = layer_info["layer"]
             symbols = layer_info["symbols"]
-            if n == 0 and len(symbols) > 50:
-                click.echo(f"\n  Layer 0 ({len(symbols)} symbols): base layer (no dependencies)")
+            if len(symbols) > 50:
+                label = " base layer (no dependencies)" if n == 0 else ""
+                click.echo(f"\n  Layer {n} ({len(symbols)} symbols):{label}")
             else:
                 names = [f"{abbrev_kind(s['kind'])} {s['name']}" for s in symbols]
                 preview = truncate_lines(names, 10)

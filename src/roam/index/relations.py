@@ -27,14 +27,17 @@ def resolve_references(
             if qn:
                 symbols_by_qualified[qn] = sym
 
-    # Build fallback map: file_path -> first top-level symbol in that file
+    # Build fallback map: file_path -> sorted list of symbols for line-based lookup
     # Used when source_name is None/empty (top-level code, e.g. Vue <script setup>)
-    _file_fallback: dict[str, dict] = {}
+    _file_symbols: dict[str, list[dict]] = {}
     for sym_list in symbols_by_name.values():
         for sym in sym_list:
             fp = sym.get("file_path", "")
-            if fp and fp not in _file_fallback:
-                _file_fallback[fp] = sym
+            if fp:
+                _file_symbols.setdefault(fp, []).append(sym)
+    # Sort each file's symbols by line_start for binary-search-style lookup
+    for fp in _file_symbols:
+        _file_symbols[fp].sort(key=lambda s: s.get("line_start") or 0)
 
     # Also index source symbols by name for finding the caller
     edges = []
@@ -53,8 +56,9 @@ def resolve_references(
         # Find source symbol (the caller)
         source_sym = _best_match(source_name, source_file, symbols_by_name)
         if source_sym is None:
-            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope)
-            source_sym = _file_fallback.get(source_file)
+            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
+            # pick the closest symbol at or before the reference line
+            source_sym = _closest_symbol(source_file, line, _file_symbols)
         if source_sym is None:
             continue
 
@@ -124,6 +128,31 @@ def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: st
 
     # Fall back to first candidate
     return candidates[0]
+
+
+def _closest_symbol(
+    source_file: str,
+    ref_line: int | None,
+    file_symbols: dict[str, list[dict]],
+) -> dict | None:
+    """Find the closest symbol at or before ref_line in the same file.
+
+    Falls back to the first symbol in the file if ref_line is None or
+    no symbol precedes the reference.
+    """
+    syms = file_symbols.get(source_file)
+    if not syms:
+        return None
+    if ref_line is None:
+        return syms[0]
+    # Find the last symbol whose line_start <= ref_line
+    best = syms[0]
+    for sym in syms:
+        if (sym.get("line_start") or 0) <= ref_line:
+            best = sym
+        else:
+            break
+    return best
 
 
 def build_file_edges(
