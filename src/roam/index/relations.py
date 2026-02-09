@@ -27,6 +27,15 @@ def resolve_references(
             if qn:
                 symbols_by_qualified[qn] = sym
 
+    # Build fallback map: file_path -> first top-level symbol in that file
+    # Used when source_name is None/empty (top-level code, e.g. Vue <script setup>)
+    _file_fallback: dict[str, dict] = {}
+    for sym_list in symbols_by_name.values():
+        for sym in sym_list:
+            fp = sym.get("file_path", "")
+            if fp and fp not in _file_fallback:
+                _file_fallback[fp] = sym
+
     # Also index source symbols by name for finding the caller
     edges = []
     seen = set()
@@ -43,6 +52,9 @@ def resolve_references(
 
         # Find source symbol (the caller)
         source_sym = _best_match(source_name, source_file, symbols_by_name)
+        if source_sym is None:
+            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope)
+            source_sym = _file_fallback.get(source_file)
         if source_sym is None:
             continue
 

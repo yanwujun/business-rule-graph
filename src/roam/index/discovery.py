@@ -83,7 +83,11 @@ def _walk_files(root: Path) -> list[str]:
         ]
         for fname in filenames:
             full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, root).replace("\\", "/")
+            try:
+                rel = os.path.relpath(full, root).replace("\\", "/")
+            except (ValueError, OSError):
+                # Skip paths that can't be made relative (e.g. Windows device names like NUL)
+                continue
             result.append(rel)
     return result
 

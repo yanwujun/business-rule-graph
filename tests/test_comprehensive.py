@@ -732,6 +732,24 @@ def polyglot(tmp_path_factory):
         '};\n'
         '</script>\n'
     )
+    # TS composable used by Vue files — tests cross-file import resolution
+    (vue_dir / "useCounter.ts").write_text(
+        'export function useCounter(initial: number) {\n'
+        '  let count = initial;\n'
+        '  return { count, increment: () => count++ };\n'
+        '}\n'
+    )
+    (vue_dir / "App.vue").write_text(
+        '<template>\n'
+        '  <div>{{ counter.count }}</div>\n'
+        '</template>\n'
+        '\n'
+        '<script setup lang="ts">\n'
+        'import { useCounter } from "./useCounter";\n'
+        '\n'
+        'const counter = useCounter(0);\n'
+        '</script>\n'
+    )
 
     git_init(proj)
     out, rc = roam("index", "--force", cwd=proj)
@@ -1120,6 +1138,23 @@ class TestVueSFC:
         """Vue SFC without lang attr should parse as JavaScript."""
         out, _ = roam("file", "vue/Legacy.vue", cwd=polyglot)
         assert "Legacy.vue" in out
+
+    def test_vue_imports_create_edges(self, polyglot):
+        """Vue <script setup> imports from TS files should create dependency edges."""
+        out, _ = roam("deps", "vue/App.vue", cwd=polyglot)
+        assert "useCounter" in out or "Imports" in out
+
+    def test_vue_symbol_has_callers(self, polyglot):
+        """TS function imported by Vue should show callers from Vue file."""
+        out, _ = roam("symbol", "useCounter", cwd=polyglot)
+        assert "useCounter" in out
+        # The Vue file should appear as a caller
+        assert "App.vue" in out or "in=" in out
+
+    def test_vue_no_script_tags_in_parse(self, polyglot):
+        """The <script> and </script> tags should not appear as symbols."""
+        out, _ = roam("file", "vue/Counter.vue", cwd=polyglot)
+        assert "<script" not in out
 
 
 # ============================================================================

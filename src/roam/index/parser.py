@@ -127,10 +127,11 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
         closing_tag_start = inner_text.rfind("</script>")
         closing_lines = inner_text[:closing_tag_start].count("\n")
 
-        content_start = block_start + opening_lines
+        # +1 to skip the opening tag line, no +1 on end to exclude </script>
+        content_start = block_start + opening_lines + 1
         content_end = block_start + closing_lines
 
-        for i in range(content_start, min(content_end + 1, len(lines))):
+        for i in range(content_start, min(content_end, len(lines))):
             script_line_flags[i] = True
 
     # Build output: keep script lines, blank out everything else
