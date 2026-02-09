@@ -65,14 +65,23 @@ def resolve_references(
         # Find target symbol
         # 1. Try qualified name exact match
         target_sym = symbols_by_qualified.get(target_name)
-        # If the qualified match is in a different file, prefer a same-file
-        # symbol with that name (avoids misresolution when many symbols share
-        # a short qualified_name like "cn" or "emit").
+        # If the qualified match is in a different file, prefer a local
+        # symbol (same-file, then same-directory for Go packages).
         if target_sym is not None and target_sym.get("file_path") != source_file:
-            for cand in symbols_by_name.get(target_name, []):
+            candidates = symbols_by_name.get(target_name, [])
+            # Prefer same-file
+            for cand in candidates:
                 if cand.get("file_path") == source_file:
                     target_sym = cand
                     break
+            else:
+                # Prefer same-directory (Go packages, co-located modules)
+                source_dir = os.path.dirname(source_file) if source_file else ""
+                if source_dir and os.path.dirname(target_sym.get("file_path", "")) != source_dir:
+                    for cand in candidates:
+                        if os.path.dirname(cand.get("file_path", "")) == source_dir:
+                            target_sym = cand
+                            break
         # 2. Try by simple name with disambiguation
         if target_sym is None:
             target_sym = _best_match(target_name, source_file, symbols_by_name, ref_kind=kind)
@@ -127,14 +136,20 @@ def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: st
         if sym.get("file_path") == source_file:
             return sym
 
-    # Prefer same directory
+    # Prefer same directory — with exported definitions over local bindings
     source_dir = os.path.dirname(source_file) if source_file else ""
-    for sym in candidates:
-        sym_dir = os.path.dirname(sym.get("file_path", ""))
-        if sym_dir == source_dir:
-            return sym
+    same_dir = [s for s in candidates if os.path.dirname(s.get("file_path", "")) == source_dir]
+    if same_dir:
+        # Prefer exported symbols (canonical definitions, not destructured imports)
+        exported = [s for s in same_dir if s.get("is_exported")]
+        if exported:
+            return exported[0]
+        return same_dir[0]
 
-    # Fall back to first candidate
+    # Fall back: prefer exported symbols globally
+    exported = [s for s in candidates if s.get("is_exported")]
+    if exported:
+        return exported[0]
     return candidates[0]
 
 
