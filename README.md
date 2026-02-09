@@ -1,21 +1,25 @@
 <div align="center">
+<pre>
+██████   ██████   █████  ███    ███
+██   ██ ██    ██ ██   ██ ████  ████
+██████  ██    ██ ███████ ██ ████ ██
+██   ██ ██    ██ ██   ██ ██  ██  ██
+██   ██  ██████  ██   ██ ██      ██
+</pre>
 
-```
-                    ┌─────────────────────────────────┐
-                    │   r o a m                       │
-                    │   codebase intelligence for AI  │
-                    └─────────────────────────────────┘
-```
+**codebase intelligence for AI**
 
-**20 commands. One pre-built index. Instant answers.**
-
-Your AI agent shouldn't need 10 tool calls to understand a codebase.
+20 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/ci.yml)
 
 </div>
+
+---
+
+Your AI agent shouldn't need 10 tool calls to understand a codebase. Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away.
 
 ```bash
 $ roam index                     # build once (~5s), then incremental
@@ -26,8 +30,6 @@ $ roam health                    # cycles, god components, bottlenecks
 $ roam weather                   # hotspots: churn x complexity from git history
 $ roam diff                      # blast radius of your uncommitted changes
 ```
-
-Roam pre-indexes your entire codebase -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away. Built for AI agents, useful for humans.
 
 ## Table of Contents
 
