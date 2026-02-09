@@ -41,8 +41,9 @@ def label_clusters(
 ) -> dict[int, str]:
     """Generate human-readable labels for clusters.
 
-    Labels are derived from the most common directory prefix among each
-    cluster's symbols.  Returns ``{cluster_id: label}``.
+    Uses the highest-PageRank symbol in each cluster as the label,
+    falling back to the most common directory prefix.
+    Returns ``{cluster_id: label}``.
     """
     if not clusters:
         return {}
@@ -52,32 +53,58 @@ def label_clusters(
     for node_id, cid in clusters.items():
         groups[cid].append(node_id)
 
-    # Fetch file paths for all symbols in one query
+    # Fetch file paths and pagerank for all symbols in one query
     all_ids = list(clusters.keys())
     placeholders = ",".join("?" for _ in all_ids)
     rows = conn.execute(
-        f"SELECT s.id, f.path FROM symbols s "
+        f"SELECT s.id, s.name, f.path, COALESCE(gm.pagerank, 0) as pagerank "
+        f"FROM symbols s "
         f"JOIN files f ON s.file_id = f.id "
+        f"LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
         f"WHERE s.id IN ({placeholders})",
         all_ids,
     ).fetchall()
-    id_to_path: dict[int, str] = {sid: path for sid, path in rows}
+    id_to_path: dict[int, str] = {}
+    id_to_info: dict[int, dict] = {}
+    for r in rows:
+        id_to_path[r["id"]] = r["path"]
+        id_to_info[r["id"]] = {"name": r["name"], "pagerank": r["pagerank"]}
 
     labels: dict[int, str] = {}
     for cid, members in groups.items():
-        dirs = [
-            os.path.dirname(id_to_path[m]).replace("\\", "/")
-            for m in members
-            if m in id_to_path
-        ]
-        if not dirs:
-            labels[cid] = f"cluster-{cid}"
-            continue
+        # Try to use the highest-PageRank symbol as the label
+        best_name = None
+        best_pr = -1
+        for m in members:
+            info = id_to_info.get(m)
+            if info and info["pagerank"] > best_pr:
+                best_pr = info["pagerank"]
+                best_name = info["name"]
 
-        most_common_dir, _count = Counter(dirs).most_common(1)[0]
-        # Use the last path component as a short label
-        short = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else "root"
-        labels[cid] = short or f"cluster-{cid}"
+        if best_name and best_pr > 0:
+            # Add directory context for disambiguation
+            dirs = [
+                os.path.dirname(id_to_path[m]).replace("\\", "/")
+                for m in members if m in id_to_path
+            ]
+            if dirs:
+                most_common_dir = Counter(dirs).most_common(1)[0][0]
+                short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
+                labels[cid] = f"{best_name} ({short_dir})" if short_dir else best_name
+            else:
+                labels[cid] = best_name
+        else:
+            # Fallback: directory-based label
+            dirs = [
+                os.path.dirname(id_to_path[m]).replace("\\", "/")
+                for m in members if m in id_to_path
+            ]
+            if not dirs:
+                labels[cid] = f"cluster-{cid}"
+                continue
+            most_common_dir = Counter(dirs).most_common(1)[0][0]
+            short = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else "root"
+            labels[cid] = short or f"cluster-{cid}"
     return labels
 
 

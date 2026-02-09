@@ -30,7 +30,23 @@ def layers():
         formatted = format_layers(layer_map, conn)
         max_layer = max(l["layer"] for l in formatted) if formatted else 0
 
+        total_symbols = sum(len(l["symbols"]) for l in formatted)
+        layer0_count = next((len(l["symbols"]) for l in formatted if l["layer"] == 0), 0)
+        layer0_pct = layer0_count * 100 / total_symbols if total_symbols else 0
+
         click.echo(f"=== Layers ({max_layer + 1} levels) ===")
+
+        # Architectural summary
+        if max_layer <= 1:
+            shape = "Flat (no layering)"
+        elif layer0_pct > 80:
+            shape = f"Flat ({layer0_pct:.0f}% in Layer 0)"
+        elif layer0_pct > 50:
+            shape = f"Moderate ({layer0_pct:.0f}% in Layer 0, {max_layer + 1} levels)"
+        else:
+            shape = f"Well-layered ({max_layer + 1} levels, even distribution)"
+        click.echo(f"  Architecture: {shape}")
+
         for layer_info in formatted:
             n = layer_info["layer"]
             symbols = layer_info["symbols"]

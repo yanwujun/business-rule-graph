@@ -15,31 +15,72 @@ def _ensure_index():
 
 
 @click.command()
-def dead():
+@click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
+def dead(show_all):
     """Show unreferenced exported symbols (dead code)."""
     _ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
 
-        click.echo(f"=== Unreferenced Exports ({len(rows)}) ===")
         if not rows:
+            click.echo("=== Unreferenced Exports (0) ===")
             click.echo("  (none -- all exports are referenced)")
             return
 
-        table_rows = []
-        for r in rows:
-            table_rows.append([
-                r["name"],
-                abbrev_kind(r["kind"]),
-                loc(r["file_path"], r["line_start"]),
-            ])
-        click.echo(format_table(
-            ["Name", "Kind", "Location"],
-            table_rows,
-            budget=50,
-        ))
+        # Split by confidence: file is imported (high) vs not imported (low)
+        imported_files = set()
+        for r in conn.execute(
+            "SELECT DISTINCT target_file_id FROM file_edges"
+        ).fetchall():
+            imported_files.add(r["target_file_id"])
 
-        # Check for files with no extracted symbols (may cause false positives)
+        # Get file_id for each dead symbol
+        high = []
+        low = []
+        for r in rows:
+            file_id = r["file_id"]
+            if file_id in imported_files:
+                high.append(r)
+            else:
+                low.append(r)
+
+        click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===\n")
+
+        if high:
+            click.echo(f"-- High confidence ({len(high)}) --")
+            click.echo("(file is imported but symbol has no references)")
+            table_rows = []
+            for r in high:
+                table_rows.append([
+                    r["name"],
+                    abbrev_kind(r["kind"]),
+                    loc(r["file_path"], r["line_start"]),
+                ])
+            click.echo(format_table(
+                ["Name", "Kind", "Location"],
+                table_rows,
+                budget=50,
+            ))
+
+        if show_all and low:
+            click.echo(f"\n-- Low confidence ({len(low)}) --")
+            click.echo("(file has no importers — may be entry point or used by unparsed files)")
+            table_rows = []
+            for r in low:
+                table_rows.append([
+                    r["name"],
+                    abbrev_kind(r["kind"]),
+                    loc(r["file_path"], r["line_start"]),
+                ])
+            click.echo(format_table(
+                ["Name", "Kind", "Location"],
+                table_rows,
+                budget=50,
+            ))
+        elif low:
+            click.echo(f"\n({len(low)} low-confidence results hidden — use --all to show)")
+
+        # Check for files with no extracted symbols
         unparsed = conn.execute(
             "SELECT COUNT(*) FROM files f "
             "WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)"
