@@ -38,15 +38,31 @@ def search(pattern, full, kind_filter):
             return
 
         click.echo(f"=== Symbols matching '{pattern}' ({len(rows)}) ===")
+
+        # Batch-fetch incoming edge counts for all matched symbols
+        sym_ids = [r["id"] for r in rows]
+        ref_counts = {}
+        for i in range(0, len(sym_ids), 500):
+            batch = sym_ids[i:i + 500]
+            ph = ",".join("?" for _ in batch)
+            for rc in conn.execute(
+                f"SELECT target_id, COUNT(*) as cnt FROM edges "
+                f"WHERE target_id IN ({ph}) GROUP BY target_id",
+                batch,
+            ).fetchall():
+                ref_counts[rc["target_id"]] = rc["cnt"]
+
         table_rows = []
         for r in rows:
+            refs = ref_counts.get(r["id"], 0)
             table_rows.append([
                 r["name"],
                 abbrev_kind(r["kind"]),
+                str(refs),
                 loc(r["file_path"], r["line_start"]),
             ])
         click.echo(format_table(
-            ["Name", "Kind", "Location"],
+            ["Name", "Kind", "Refs", "Location"],
             table_rows,
             budget=0 if full else 50,
         ))

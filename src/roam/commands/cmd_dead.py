@@ -34,6 +34,31 @@ def dead(show_all):
         ).fetchall():
             imported_files.add(r["target_file_id"])
 
+        # Filter out symbols consumed transitively:
+        # If a same-named symbol in a file that imports THIS file has incoming edges,
+        # the export is alive (consumed through the import chain).
+        transitively_alive = set()
+        for r in rows:
+            fid = r["file_id"]
+            if fid not in imported_files:
+                continue
+            # Check: does any symbol with this name, in a file that imports from
+            # this symbol's file, have incoming edges?
+            alive = conn.execute(
+                """SELECT 1 FROM edges e
+                   JOIN symbols s ON e.target_id = s.id
+                   WHERE s.name = ?
+                   AND s.file_id IN (
+                       SELECT source_file_id FROM file_edges WHERE target_file_id = ?
+                   )
+                   LIMIT 1""",
+                (r["name"], fid),
+            ).fetchone()
+            if alive:
+                transitively_alive.add(r["id"])
+
+        rows = [r for r in rows if r["id"] not in transitively_alive]
+
         # Get file_id for each dead symbol
         high = []
         low = []
