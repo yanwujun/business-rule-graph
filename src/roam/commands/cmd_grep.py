@@ -1,0 +1,152 @@
+"""Context-enriched grep: text search annotated with enclosing symbols."""
+
+import os
+import re
+import subprocess
+
+import click
+
+from roam.db.connection import db_exists, find_project_root, open_db
+from roam.output.formatter import abbrev_kind, loc
+
+
+def _ensure_index():
+    if not db_exists():
+        from roam.index.indexer import Indexer
+        Indexer().run()
+
+
+def _grep_files(pattern, root, glob_filter=None):
+    """Grep for a pattern using git grep (fast) or fallback to manual search."""
+    matches = []
+    regex = re.compile(pattern, re.IGNORECASE)
+
+    # Try git grep first
+    try:
+        cmd = ["git", "grep", "-n", "-I", "--no-color", "-E", pattern]
+        if glob_filter:
+            cmd.extend(["--", glob_filter])
+        result = subprocess.run(
+            cmd, cwd=str(root), capture_output=True, text=True,
+            timeout=30, encoding="utf-8", errors="replace",
+        )
+        if result.returncode <= 1:  # 0 = matches, 1 = no matches
+            for line in result.stdout.splitlines():
+                # Format: path:line_num:content
+                parts = line.split(":", 2)
+                if len(parts) >= 3:
+                    path, line_num, content = parts[0], parts[1], parts[2]
+                    try:
+                        matches.append({
+                            "path": path.replace("\\", "/"),
+                            "line": int(line_num),
+                            "content": content.strip(),
+                        })
+                    except ValueError:
+                        continue
+            return matches
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: manual file search using indexed files
+    try:
+        with open_db(readonly=True) as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+            file_paths = [r["path"] for r in rows]
+    except Exception:
+        return matches
+
+    for rel_path in file_paths:
+        if glob_filter and not _matches_glob(rel_path, glob_filter):
+            continue
+        full_path = root / rel_path
+        try:
+            text = full_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if regex.search(line):
+                matches.append({
+                    "path": rel_path,
+                    "line": i,
+                    "content": line.strip(),
+                })
+
+    return matches
+
+
+def _matches_glob(path, pattern):
+    """Simple glob matching."""
+    import fnmatch
+    return fnmatch.fnmatch(path, pattern)
+
+
+def _find_enclosing_symbol(conn, file_path, line_num):
+    """Find the most specific symbol that contains a given line."""
+    row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
+    if not row:
+        return None
+
+    file_id = row["id"]
+
+    # Find the most specific (smallest range) symbol containing this line
+    result = conn.execute(
+        """SELECT name, qualified_name, kind, line_start, line_end
+           FROM symbols
+           WHERE file_id = ? AND line_start <= ? AND line_end >= ?
+           ORDER BY (line_end - line_start) ASC
+           LIMIT 1""",
+        (file_id, line_num, line_num),
+    ).fetchone()
+
+    if result:
+        return {
+            "name": result["name"],
+            "qualified_name": result["qualified_name"],
+            "kind": result["kind"],
+            "line_start": result["line_start"],
+        }
+    return None
+
+
+@click.command("grep")
+@click.argument("pattern")
+@click.option("-g", "--glob", "glob_filter", default=None,
+              help="Filter files by glob pattern (e.g. '*.php')")
+@click.option("-n", "count", default=50, help="Max results to show")
+def grep_cmd(pattern, glob_filter, count):
+    """Context-enriched grep: search with enclosing symbol annotation."""
+    _ensure_index()
+    root = find_project_root()
+
+    matches = _grep_files(pattern, root, glob_filter)
+    if not matches:
+        click.echo(f"No matches for '{pattern}'")
+        return
+
+    click.echo(f"=== {len(matches)} matches for '{pattern}' ===\n")
+
+    with open_db(readonly=True) as conn:
+        shown = 0
+        for m in matches:
+            if shown >= count:
+                remaining = len(matches) - count
+                click.echo(f"\n(+{remaining} more)")
+                break
+
+            sym = _find_enclosing_symbol(conn, m["path"], m["line"])
+            location = loc(m["path"], m["line"])
+
+            if sym:
+                sym_info = f"  in {abbrev_kind(sym['kind'])} {sym['qualified_name']}"
+            else:
+                sym_info = ""
+
+            # Truncate content for readability
+            content = m["content"]
+            if len(content) > 100:
+                content = content[:97] + "..."
+
+            click.echo(f"  {location}{sym_info}")
+            click.echo(f"    {content}")
+            shown += 1
