@@ -751,6 +751,22 @@ def polyglot(tmp_path_factory):
         '</script>\n'
     )
 
+    # ---- Test files (for test-map command) ----
+    test_dir = proj / "tests"
+    test_dir.mkdir()
+    (test_dir / "test_animals.py").write_text(
+        'from python.base import Animal\n'
+        'from python.dog import Dog\n'
+        '\n'
+        'def test_animal_speak():\n'
+        '    a = Animal("test")\n'
+        '    assert a.speak() == "..."\n'
+        '\n'
+        'def test_dog_speak():\n'
+        '    d = Dog("Rex")\n'
+        '    assert d.speak() == "Woof"\n'
+    )
+
     git_init(proj)
     out, rc = roam("index", "--force", cwd=proj)
     assert rc == 0, f"Index failed: {out}"
@@ -1577,3 +1593,88 @@ class TestCrossLanguage:
         out, _ = roam("grep", "return", cwd=polyglot)
         # Should match in many languages
         assert ".py" in out or ".java" in out or ".js" in out
+
+
+# ============================================================================
+# NEW v3.6 COMMANDS
+# ============================================================================
+
+class TestDescribe:
+    def test_describe_runs(self, polyglot):
+        """roam describe should produce Markdown output."""
+        out, rc = roam("describe", cwd=polyglot)
+        assert rc == 0
+        assert "Project Overview" in out
+        assert "Files:" in out or "**Files:**" in out
+
+    def test_describe_has_sections(self, polyglot):
+        """Describe should include all major sections."""
+        out, rc = roam("describe", cwd=polyglot)
+        assert rc == 0
+        assert "Directory Structure" in out
+        assert "Entry Points" in out
+        assert "Testing" in out
+
+    def test_describe_write(self, polyglot):
+        """roam describe --write should create CLAUDE.md."""
+        out, rc = roam("describe", "--write", cwd=polyglot)
+        assert rc == 0
+        claude_md = polyglot / "CLAUDE.md"
+        assert claude_md.exists()
+        content = claude_md.read_text(encoding="utf-8")
+        assert "Project" in content
+
+    def test_describe_help(self):
+        """roam describe --help should work."""
+        out, rc = roam("describe", "--help")
+        assert rc == 0
+
+
+class TestTestMap:
+    def test_testmap_symbol(self, polyglot):
+        """roam test-map for a symbol should show test coverage."""
+        out, rc = roam("test-map", "Animal", cwd=polyglot)
+        assert rc == 0
+        assert "Test coverage" in out or "test" in out.lower()
+
+    def test_testmap_file(self, polyglot):
+        """roam test-map for a file should show test files."""
+        out, rc = roam("test-map", "python/base.py", cwd=polyglot)
+        assert rc == 0
+        assert "Test coverage" in out or "test" in out.lower()
+
+    def test_testmap_not_found(self, polyglot):
+        """roam test-map with nonexistent name should fail gracefully."""
+        out, rc = roam("test-map", "NonExistentThing999", cwd=polyglot)
+        assert rc != 0
+
+    def test_testmap_help(self):
+        """roam test-map --help should work."""
+        out, rc = roam("test-map", "--help")
+        assert rc == 0
+
+
+class TestSketch:
+    def test_sketch_directory(self, polyglot):
+        """roam sketch should show exported symbols per file."""
+        out, rc = roam("sketch", "python", cwd=polyglot)
+        assert rc == 0
+        # Should show file paths and symbol kinds
+        assert "python" in out
+
+    def test_sketch_full(self, polyglot):
+        """roam sketch --full should show all symbols."""
+        out, rc = roam("sketch", "python", "--full", cwd=polyglot)
+        assert rc == 0
+        assert "python" in out
+
+    def test_sketch_nonexistent(self, polyglot):
+        """roam sketch with nonexistent dir should handle gracefully."""
+        out, rc = roam("sketch", "nonexistent_dir_xyz", cwd=polyglot)
+        assert rc == 0
+        assert "No" in out
+
+    def test_sketch_help(self):
+        """roam sketch --help should work."""
+        out, rc = roam("sketch", "--help")
+        assert rc == 0

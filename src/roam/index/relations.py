@@ -62,6 +62,15 @@ def resolve_references(
         if source_sym is None:
             continue
 
+        # Extract parent context from source for same-file disambiguation
+        # e.g. MyStruct::some_method -> parent = "MyStruct"
+        source_parent = ""
+        src_qn = source_sym.get("qualified_name", "")
+        if "::" in src_qn:
+            source_parent = src_qn.rsplit("::", 1)[0]
+        elif "." in src_qn:
+            source_parent = src_qn.rsplit(".", 1)[0]
+
         # Find target symbol
         # 1. Try qualified name exact match
         target_sym = symbols_by_qualified.get(target_name)
@@ -84,7 +93,7 @@ def resolve_references(
                             break
         # 2. Try by simple name with disambiguation
         if target_sym is None:
-            target_sym = _best_match(target_name, source_file, symbols_by_name, ref_kind=kind)
+            target_sym = _best_match(target_name, source_file, symbols_by_name, ref_kind=kind, source_parent=source_parent)
 
         if target_sym is None:
             continue
@@ -110,7 +119,7 @@ def resolve_references(
     return edges
 
 
-def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: str = "") -> dict | None:
+def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: str = "", source_parent: str = "") -> dict | None:
     """Find the best matching symbol for a name, preferring locality."""
     candidates = symbols_by_name.get(name, [])
     if not candidates:
@@ -131,10 +140,19 @@ def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: st
                     return sym
             return class_candidates[0]
 
-    # Prefer same file
-    for sym in candidates:
-        if sym.get("file_path") == source_file:
-            return sym
+    # Prefer same file — with parent-aware tie-breaking for Rust/Go impl blocks
+    same_file = [s for s in candidates if s.get("file_path") == source_file]
+    if len(same_file) == 1:
+        return same_file[0]
+    if len(same_file) > 1:
+        # If source has a parent (e.g. MyStruct::some_method calling new()),
+        # prefer the candidate whose qualified_name starts with the same parent
+        if source_parent:
+            for s in same_file:
+                qn = s.get("qualified_name", "")
+                if qn.startswith(source_parent + "::") or qn.startswith(source_parent + "."):
+                    return s
+        return same_file[0]
 
     # Prefer same directory — with exported definitions over local bindings
     source_dir = os.path.dirname(source_file) if source_file else ""

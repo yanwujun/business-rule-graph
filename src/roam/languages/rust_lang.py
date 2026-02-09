@@ -468,7 +468,17 @@ class RustExtractor(LanguageExtractor):
         func_node = node.child_by_field_name("function")
         if func_node is None:
             return
-        name = self.node_text(func_node, source)
+
+        # Handle method calls: obj.method() -> extract "method"
+        if func_node.type == "field_expression":
+            field = func_node.child_by_field_name("field")
+            if field:
+                name = self.node_text(field, source)
+            else:
+                name = self.node_text(func_node, source)
+        else:
+            name = self.node_text(func_node, source)
+
         refs.append(self._make_reference(
             target_name=name,
             kind="call",

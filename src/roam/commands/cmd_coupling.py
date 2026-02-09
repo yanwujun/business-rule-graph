@@ -37,7 +37,7 @@ def coupling(count):
         # Check which pairs have structural connections (file_edges)
         file_edge_set = set()
         fe_rows = conn.execute(
-            "SELECT source_file_id, target_file_id FROM file_edges"
+            "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 2"
         ).fetchall()
         for fe in fe_rows:
             file_edge_set.add((fe["source_file_id"], fe["target_file_id"]))

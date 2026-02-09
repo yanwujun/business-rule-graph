@@ -343,7 +343,17 @@ class GoExtractor(LanguageExtractor):
         func_node = node.child_by_field_name("function")
         if func_node is None:
             return
-        name = self.node_text(func_node, source)
+
+        # Handle method calls: obj.Method() -> extract "Method"
+        if func_node.type == "selector_expression":
+            field = func_node.child_by_field_name("field")
+            if field:
+                name = self.node_text(field, source)
+            else:
+                name = self.node_text(func_node, source)
+        else:
+            name = self.node_text(func_node, source)
+
         refs.append(self._make_reference(
             target_name=name,
             kind="call",

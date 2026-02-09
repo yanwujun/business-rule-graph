@@ -34,6 +34,9 @@ _COMMANDS = {
     "coupling": ("roam.commands.cmd_coupling", "coupling"),
     "fan":      ("roam.commands.cmd_fan",      "fan"),
     "diff":     ("roam.commands.cmd_diff",     "diff_cmd"),
+    "describe": ("roam.commands.cmd_describe", "describe"),
+    "test-map": ("roam.commands.cmd_testmap",  "test_map"),
+    "sketch":   ("roam.commands.cmd_sketch",   "sketch"),
 }
 
 

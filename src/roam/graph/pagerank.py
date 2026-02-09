@@ -27,7 +27,8 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     if len(G) == 0:
         return {}
 
-    betweenness = nx.betweenness_centrality(G, normalized=False)
+    k = min(len(G), 500)  # Sample at most 500 pivot nodes for O(k×m) instead of O(n×m)
+    betweenness = nx.betweenness_centrality(G, k=k, normalized=False)
     result: dict[int, dict] = {}
     for node in G.nodes:
         result[node] = {

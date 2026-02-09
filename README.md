@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI**
 
-20 commands · one pre-built index · instant answers
+23 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -137,6 +137,9 @@ roam health
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
 | `roam diff [--staged] [--full]` | Blast radius of uncommitted changes |
+| `roam describe [--write]` | Auto-generate project description (CLAUDE.md) from the index |
+| `roam test-map <name>` | Map a symbol or file to its test coverage |
+| `roam sketch <dir> [--full]` | Compact structural skeleton of a directory (API surface) |
 
 ### Architecture
 
@@ -273,6 +276,9 @@ Run `roam index` once, then use these commands instead of Glob/Grep/Read explora
 - `roam owner <path>` -- code ownership (who should review)
 - `roam coupling` -- temporal coupling (hidden dependencies)
 - `roam fan [symbol|file]` -- fan-in/fan-out (god objects)
+- `roam describe` -- auto-generate CLAUDE.md from the index
+- `roam test-map <name>` -- map symbols/files to test coverage
+- `roam sketch <dir>` -- structural skeleton of a directory
 ```
 
 <details>
@@ -503,7 +509,7 @@ roam map
 roam-code/
 ├── pyproject.toml
 ├── src/roam/
-│   ├── cli.py                      # Click CLI entry point (20 commands)
+│   ├── cli.py                      # Click CLI entry point (23 commands)
 │   ├── db/
 │   │   ├── connection.py           # SQLite connection (WAL, pragmas)
 │   │   ├── schema.py               # 10 tables, 20+ indexes
