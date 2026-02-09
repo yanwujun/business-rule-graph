@@ -38,9 +38,14 @@ def _pick_best(conn, rows):
 
 def _find_symbol(conn, name):
     """Find a symbol by exact name, qualified name, or fuzzy match."""
-    row = conn.execute(SYMBOL_BY_QUALIFIED, (name,)).fetchone()
-    if row:
-        return row
+    rows = conn.execute(SYMBOL_BY_QUALIFIED, (name,)).fetchall()
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        best = _pick_best(conn, rows)
+        if best:
+            return best
+        return rows  # Ambiguous
     rows = conn.execute(SYMBOL_BY_NAME, (name,)).fetchall()
     if len(rows) == 1:
         return rows[0]

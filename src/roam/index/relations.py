@@ -65,6 +65,14 @@ def resolve_references(
         # Find target symbol
         # 1. Try qualified name exact match
         target_sym = symbols_by_qualified.get(target_name)
+        # If the qualified match is in a different file, prefer a same-file
+        # symbol with that name (avoids misresolution when many symbols share
+        # a short qualified_name like "cn" or "emit").
+        if target_sym is not None and target_sym.get("file_path") != source_file:
+            for cand in symbols_by_name.get(target_name, []):
+                if cand.get("file_path") == source_file:
+                    target_sym = cand
+                    break
         # 2. Try by simple name with disambiguation
         if target_sym is None:
             target_sym = _best_match(target_name, source_file, symbols_by_name, ref_kind=kind)
