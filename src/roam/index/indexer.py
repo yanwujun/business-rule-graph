@@ -7,7 +7,7 @@ from pathlib import Path
 
 from roam.db.connection import open_db, find_project_root, get_db_path
 from roam.index.discovery import discover_files
-from roam.index.parser import parse_file, detect_language
+from roam.index.parser import parse_file, detect_language, extract_vue_template, scan_template_references
 from roam.index.symbols import extract_symbols, extract_references
 from roam.index.relations import resolve_references, build_file_edges
 from roam.index.incremental import get_changed_files, file_hash
@@ -272,6 +272,18 @@ class Indexer:
                     ref["source_file"] = rel_path
                 all_references.extend(refs)
 
+                # Vue template scanning: find identifiers in <template> that
+                # reference <script setup> bindings
+                if rel_path.endswith(".vue"):
+                    tpl_result = extract_vue_template(source)
+                    if tpl_result:
+                        tpl_content, tpl_start_line = tpl_result
+                        known_names = {s["name"] for s in symbols}
+                        tpl_refs = scan_template_references(
+                            tpl_content, tpl_start_line, known_names, rel_path,
+                        )
+                        all_references.extend(tpl_refs)
+
                 # Supplement: run generic extractor for inheritance refs
                 # that Tier 1 extractors may miss
                 if not isinstance(extractor, GenericExtractor) and language:
@@ -363,6 +375,20 @@ class Indexer:
                         for ref in refs:
                             ref["source_file"] = rel_path
                         all_references.extend(refs)
+                        # Vue template scanning for unchanged files
+                        if rel_path.endswith(".vue"):
+                            from roam.index.parser import read_source
+                            raw_source = read_source(full_path)
+                            if raw_source:
+                                tpl_result = extract_vue_template(raw_source)
+                                if tpl_result:
+                                    tpl_content, tpl_start_line = tpl_result
+                                    syms = extractor.extract_symbols(tree, parsed_source, rel_path)
+                                    known_names = {s["name"] for s in syms}
+                                    tpl_refs = scan_template_references(
+                                        tpl_content, tpl_start_line, known_names, rel_path,
+                                    )
+                                    all_references.extend(tpl_refs)
                         # Generic supplement for unchanged files too
                         if not isinstance(extractor, GenericExtractor) and language:
                             try:

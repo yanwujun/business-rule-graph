@@ -115,3 +115,41 @@ def module(path):
             click.echo(format_table(["file", "symbols"], rows, budget=20))
         else:
             click.echo("Imported by (external): (none)")
+
+        # --- Module metrics ---
+        click.echo()
+        # Total symbols in module (including non-exported)
+        all_sym_ids = set()
+        for f in files:
+            sym_rows = conn.execute(
+                "SELECT id FROM symbols WHERE file_id = ?", (f["id"],)
+            ).fetchall()
+            for sr in sym_rows:
+                all_sym_ids.add(sr["id"])
+
+        total_syms = len(all_sym_ids)
+        exported_count = len(symbols) if symbols else 0
+        api_surface = exported_count * 100 / total_syms if total_syms else 0
+
+        # Cohesion: internal edges / total edges involving module symbols
+        if all_sym_ids:
+            ph = ",".join("?" for _ in all_sym_ids)
+            ids_list = list(all_sym_ids)
+            internal_edges = conn.execute(
+                f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) AND target_id IN ({ph})",
+                ids_list + ids_list,
+            ).fetchone()[0]
+            total_edges = conn.execute(
+                f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) OR target_id IN ({ph})",
+                ids_list + ids_list,
+            ).fetchone()[0]
+            cohesion = internal_edges * 100 / total_edges if total_edges else 0
+        else:
+            cohesion = 0
+            internal_edges = 0
+            total_edges = 0
+
+        ext_importers = len(imported_by_external)
+        click.echo(f"Cohesion: {cohesion:.0f}% ({internal_edges}/{total_edges} edges are internal)")
+        click.echo(f"API surface: {api_surface:.0f}% exported ({exported_count}/{total_syms} symbols)")
+        click.echo(f"Reused by: {ext_importers} external files")

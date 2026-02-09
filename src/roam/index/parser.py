@@ -186,6 +186,91 @@ def parse_file(path: Path, language: str | None = None):
     return tree, source, language
 
 
+def extract_vue_template(source: bytes) -> tuple[str, int] | None:
+    """Extract the <template> block content from a Vue SFC.
+
+    Returns (template_content, start_line_number) or None if no template found.
+    The start_line_number is 1-based.
+    """
+    text = source.decode("utf-8", errors="replace")
+    match = re.search(r'<template[^>]*>(.*?)</template>', text, re.DOTALL)
+    if not match:
+        return None
+    content = match.group(1)
+    # Count lines before the template content to get the start line
+    start_line = text[:match.start(1)].count("\n") + 1
+    return content, start_line
+
+
+def scan_template_references(
+    template_content: str,
+    start_line: int,
+    known_symbols: set[str],
+    file_path: str,
+) -> list[dict]:
+    """Scan a Vue template block for identifiers matching known script symbols.
+
+    Returns a list of reference dicts compatible with the reference pipeline.
+    """
+    if not template_content or not known_symbols:
+        return []
+
+    # Patterns to extract expression strings from template
+    # Mustache interpolations: {{ expression }}
+    # Attribute bindings: :attr="expression" or v-bind:attr="expression"
+    # Directives: v-if="expression", v-for="expr", v-show="expr", etc.
+    # Event handlers: @event="handler" or v-on:event="handler"
+    expr_patterns = [
+        re.compile(r'\{\{(.*?)\}\}', re.DOTALL),           # {{ expr }}
+        re.compile(r'(?::|v-bind:)[\w.-]+="([^"]*)"'),     # :attr="expr"
+        re.compile(r'v-[\w-]+="([^"]*)"'),                  # v-directive="expr"
+        re.compile(r'(?:@|v-on:)[\w.-]+="([^"]*)"'),       # @event="handler"
+    ]
+    # Identifier pattern
+    ident_re = re.compile(r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b')
+
+    # Also detect PascalCase component names: <MyComponent> → MyComponent
+    component_re = re.compile(r'<([A-Z][a-zA-Z0-9]+)')
+
+    refs = []
+    seen = set()
+
+    lines = template_content.split("\n")
+    for line_offset, line in enumerate(lines):
+        line_num = start_line + line_offset
+
+        # Extract identifiers from template expressions
+        for pattern in expr_patterns:
+            for match in pattern.finditer(line):
+                expr = match.group(1)
+                for ident_match in ident_re.finditer(expr):
+                    name = ident_match.group(1)
+                    if name in known_symbols and name not in seen:
+                        seen.add(name)
+                        refs.append({
+                            "source_name": None,
+                            "target_name": name,
+                            "kind": "template",
+                            "line": line_num,
+                            "source_file": file_path,
+                        })
+
+        # Detect PascalCase component usage
+        for match in component_re.finditer(line):
+            name = match.group(1)
+            if name in known_symbols and name not in seen:
+                seen.add(name)
+                refs.append({
+                    "source_name": None,
+                    "target_name": name,
+                    "kind": "template",
+                    "line": line_num,
+                    "source_file": file_path,
+                })
+
+    return refs
+
+
 def get_parse_error_summary() -> str:
     """Return a summary of parse errors for logging."""
     parts = []

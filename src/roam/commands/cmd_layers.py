@@ -7,6 +7,8 @@ from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers, find_violations, format_layers
 from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines
 
+import networkx as nx
+
 
 def _ensure_index():
     from roam.db.connection import db_exists
@@ -59,6 +61,47 @@ def layers():
                 click.echo(f"\n  Layer {n} ({len(symbols)} symbols):")
                 for line in preview:
                     click.echo(f"    {line}")
+
+        # --- Deepest dependency chains (useful even for flat codebases) ---
+        if max_layer >= 1:
+            # Find the longest path in the DAG (condensation handles cycles)
+            try:
+                condensation = nx.condensation(G)
+                longest = nx.dag_longest_path(condensation)
+                if len(longest) > 1:
+                    # Map SCC nodes back to original symbols (pick highest-degree from each SCC)
+                    scc_members = condensation.graph.get("mapping", {})
+                    # Reverse mapping: SCC id -> original node ids
+                    scc_to_nodes: dict[int, list] = {}
+                    for orig_node, scc_id in scc_members.items():
+                        scc_to_nodes.setdefault(scc_id, []).append(orig_node)
+
+                    chain_ids = []
+                    for scc_id in longest:
+                        members = scc_to_nodes.get(scc_id, [])
+                        if members:
+                            # Pick the highest-degree member as representative
+                            best = max(members, key=lambda n: G.degree(n) if n in G else 0)
+                            chain_ids.append(best)
+
+                    # Look up names
+                    if chain_ids:
+                        ph = ",".join("?" for _ in chain_ids)
+                        chain_rows = conn.execute(
+                            f"SELECT s.id, s.name, s.kind, f.path as file_path "
+                            f"FROM symbols s JOIN files f ON s.file_id = f.id "
+                            f"WHERE s.id IN ({ph})",
+                            chain_ids,
+                        ).fetchall()
+                        chain_lookup = {r["id"]: r for r in chain_rows}
+                        click.echo(f"\n  Deepest dependency chain ({len(chain_ids)} levels):")
+                        for i, cid in enumerate(chain_ids):
+                            info = chain_lookup.get(cid)
+                            if info:
+                                arrow = "    " if i == 0 else "  -> "
+                                click.echo(f"  {arrow}{abbrev_kind(info['kind'])} {info['name']}  {loc(info['file_path'])}")
+            except Exception:
+                pass
 
         # --- Violations ---
         violations = find_violations(G, layer_map)

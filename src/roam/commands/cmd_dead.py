@@ -60,22 +60,33 @@ def dead(show_all):
             for ir in importer_rows:
                 importers_by_file.setdefault(ir["target_file_id"], []).append(ir["path"])
 
+            # Count how many other exported symbols in the same file ARE referenced
+            referenced_counts = {}
+            for fid in high_file_ids:
+                cnt = conn.execute(
+                    "SELECT COUNT(*) FROM symbols s "
+                    "WHERE s.file_id = ? AND s.is_exported = 1 "
+                    "AND s.id IN (SELECT target_id FROM edges)",
+                    (fid,),
+                ).fetchone()[0]
+                referenced_counts[fid] = cnt
+
             click.echo(f"-- High confidence ({len(high)}) --")
             click.echo("(file is imported but symbol has no references)")
             table_rows = []
             for r in high:
                 imp_list = importers_by_file.get(r["file_id"], [])
-                imp_str = ", ".join(imp_list[:3])
-                if len(imp_list) > 3:
-                    imp_str += f" (+{len(imp_list) - 3})"
+                n_importers = len(imp_list)
+                n_siblings = referenced_counts.get(r["file_id"], 0)
+                context = f"{n_importers} file importers, {n_siblings} sibling refs"
                 table_rows.append([
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
-                    imp_str,
+                    context,
                 ])
             click.echo(format_table(
-                ["Name", "Kind", "Location", "Imported by"],
+                ["Name", "Kind", "Location", "Context"],
                 table_rows,
                 budget=50,
             ))

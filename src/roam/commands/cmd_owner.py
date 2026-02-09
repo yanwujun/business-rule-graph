@@ -105,7 +105,17 @@ def _show_file_owner(conn, project_root, file_row):
         click.echo("  (no blame data available)")
         return
 
+    # Compute bus factor: how many authors to cover 80% of lines
+    cumulative = 0
+    bus_factor = 0
+    for _, lines in info["authors"]:
+        cumulative += lines
+        bus_factor += 1
+        if cumulative >= info["total"] * 0.8:
+            break
+
     click.echo(f"Main developer: {info['main_dev']}")
+    click.echo(f"Bus factor:     {bus_factor} (authors covering 80% of lines)")
     click.echo(f"Fragmentation:  {info['fragmentation']} (0=one owner, 1=many)")
     click.echo()
 
@@ -162,7 +172,18 @@ def _show_dir_owner(conn, project_root, path, dir_files):
 
     total_churn = sum(r["churn"] or 0 for r in rows)
     main_dev = rows[0]["author"] if rows else "?"
+
+    # Compute bus factor for directory
+    cumulative = 0
+    bus_factor = 0
+    for r in rows:
+        cumulative += r["churn"] or 0
+        bus_factor += 1
+        if cumulative >= total_churn * 0.8:
+            break
+
     click.echo(f"Main developer: {main_dev}")
+    click.echo(f"Bus factor:     {bus_factor} (authors covering 80% of churn)")
     click.echo()
 
     table_rows = []

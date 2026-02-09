@@ -33,6 +33,7 @@ _COMMANDS = {
     "owner":    ("roam.commands.cmd_owner",    "owner"),
     "coupling": ("roam.commands.cmd_coupling", "coupling"),
     "fan":      ("roam.commands.cmd_fan",      "fan"),
+    "diff":     ("roam.commands.cmd_diff",     "diff_cmd"),
 }
 
 

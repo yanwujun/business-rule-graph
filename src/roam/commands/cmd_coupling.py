@@ -43,10 +43,13 @@ def coupling(count):
             file_edge_set.add((fe["source_file_id"], fe["target_file_id"]))
             file_edge_set.add((fe["target_file_id"], fe["source_file_id"]))
 
-        # Build file path -> id lookup
+        # Build file path -> id lookup and commit counts for normalization
         path_to_id = {}
+        file_commits = {}
         for f in conn.execute("SELECT id, path FROM files").fetchall():
             path_to_id[f["path"]] = f["id"]
+        for fs in conn.execute("SELECT file_id, commit_count FROM file_stats").fetchall():
+            file_commits[fs["file_id"]] = fs["commit_count"] or 1
 
         table_rows = []
         for r in rows:
@@ -63,14 +66,24 @@ def coupling(count):
                 else:
                     has_edge = "HIDDEN"
 
-            table_rows.append([str(cochange), has_edge, path_a, path_b])
+            # Temporal coupling strength: normalized by avg commits
+            strength = ""
+            if fid_a and fid_b:
+                avg_commits = (file_commits.get(fid_a, 1) + file_commits.get(fid_b, 1)) / 2
+                if avg_commits > 0:
+                    ratio = cochange / avg_commits
+                    strength = f"{ratio:.0%}"
+
+            table_rows.append([str(cochange), strength, has_edge, path_a, path_b])
 
         click.echo("=== Temporal coupling (co-change frequency) ===")
         click.echo(format_table(
-            ["co-changes", "structural?", "file A", "file B"],
+            ["co-changes", "strength", "structural?", "file A", "file B"],
             table_rows,
         ))
 
-        hidden_count = sum(1 for r in table_rows if r[1] == "HIDDEN")
+        hidden_count = sum(1 for r in table_rows if r[2] == "HIDDEN")
+        total_pairs = len(table_rows)
         if hidden_count:
-            click.echo(f"\n{hidden_count} pairs have NO import edge but co-change frequently (hidden coupling).")
+            pct = hidden_count * 100 / total_pairs if total_pairs else 0
+            click.echo(f"\n{hidden_count}/{total_pairs} pairs ({pct:.0f}%) have NO import edge but co-change frequently (hidden coupling).")

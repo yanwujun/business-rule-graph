@@ -55,6 +55,53 @@ def clusters(min_size):
             click.echo("  (no clusters detected)")
             return
 
+        # --- Cluster cohesion and coupling ---
+        if visible:
+            # Build symbol -> cluster mapping for visible clusters
+            cluster_rows = conn.execute(
+                "SELECT symbol_id, cluster_id FROM clusters"
+            ).fetchall()
+            sym_to_cluster = {r["symbol_id"]: r["cluster_id"] for r in cluster_rows}
+
+            # Count intra-cluster and inter-cluster edges
+            edges = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
+            intra_count: dict[int, int] = {}
+            inter_pairs: dict[tuple, int] = {}
+            for e in edges:
+                c_src = sym_to_cluster.get(e["source_id"])
+                c_tgt = sym_to_cluster.get(e["target_id"])
+                if c_src is None or c_tgt is None:
+                    continue
+                if c_src == c_tgt:
+                    intra_count[c_src] = intra_count.get(c_src, 0) + 1
+                else:
+                    pair = (min(c_src, c_tgt), max(c_src, c_tgt))
+                    inter_pairs[pair] = inter_pairs.get(pair, 0) + 1
+
+            total_intra = sum(intra_count.values())
+            total_inter = sum(inter_pairs.values())
+            total_all = total_intra + total_inter
+            cohesion_pct = total_intra * 100 / total_all if total_all else 0
+            click.echo(f"\n  Cluster cohesion: {cohesion_pct:.0f}% edges are intra-cluster ({total_intra} internal, {total_inter} cross-cluster)")
+
+            # Top inter-cluster coupling pairs
+            if inter_pairs:
+                visible_pairs = {k: v for k, v in inter_pairs.items()
+                                 if k[0] in visible_ids and k[1] in visible_ids}
+                top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
+                if top_inter:
+                    # Get cluster labels
+                    cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
+                    click.echo(f"\n=== Inter-Cluster Coupling (top pairs) ===")
+                    ic_rows = []
+                    for (ca, cb), cnt in top_inter:
+                        ic_rows.append([
+                            cl_labels.get(ca, f"c{ca}"),
+                            cl_labels.get(cb, f"c{cb}"),
+                            str(cnt),
+                        ])
+                    click.echo(format_table(["Cluster A", "Cluster B", "Edges"], ic_rows))
+
         # --- Mismatches ---
         click.echo("\n=== Directory Mismatches (hidden coupling) ===")
         mismatches = compare_with_directories(conn)

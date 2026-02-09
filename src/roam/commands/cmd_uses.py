@@ -70,13 +70,16 @@ def uses(name, full):
             "inherits": "Extended by",
             "implements": "Implemented by",
             "uses_trait": "Used by (trait)",
+            "template": "Used in template",
         }
 
         total = 0
         click.echo(f"=== Consumers of '{name}' ===\n")
 
-        # Show in a consistent order
-        for kind in ("call", "import", "inherits", "implements", "uses_trait"):
+        # Show in a consistent order, then any remaining kinds
+        display_order = ["call", "import", "template", "inherits", "implements", "uses_trait"]
+        remaining = [k for k in by_kind if k not in display_order]
+        for kind in display_order + remaining:
             items = by_kind.get(kind)
             if not items:
                 continue
