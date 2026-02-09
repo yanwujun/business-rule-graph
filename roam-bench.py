@@ -325,6 +325,64 @@ def file_edge_count(conn):
     return conn.execute("SELECT COUNT(*) FROM file_edges").fetchone()[0]
 
 
+def cross_file_edge_ratio(conn):
+    """% of edges that cross file boundaries (source_file != target_file)."""
+    total = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    if total == 0:
+        return 0.0
+    cross = conn.execute("""
+        SELECT COUNT(*) FROM edges e
+        JOIN symbols s ON e.source_id = s.id
+        JOIN symbols t ON e.target_id = t.id
+        WHERE s.file_id != t.file_id
+    """).fetchone()[0]
+    return round((cross / total) * 100, 1)
+
+
+def symbol_reachability(conn):
+    """% of symbols that have at least one edge (incoming or outgoing)."""
+    total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    if total == 0:
+        return 0.0
+    connected = conn.execute("""
+        SELECT COUNT(DISTINCT id) FROM (
+            SELECT source_id as id FROM edges
+            UNION
+            SELECT target_id as id FROM edges
+        )
+    """).fetchone()[0]
+    return round((connected / total) * 100, 1)
+
+
+def qualified_name_usage(conn):
+    """% of symbols where qualified_name differs from name (scope resolution)."""
+    total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    if total == 0:
+        return 0.0
+    qualified = conn.execute(
+        "SELECT COUNT(*) FROM symbols WHERE qualified_name != name AND qualified_name IS NOT NULL"
+    ).fetchone()[0]
+    return round((qualified / total) * 100, 1)
+
+
+def orphan_file_rate(conn):
+    """% of code files not involved in any file_edge (neither source nor target)."""
+    lang_filter = ",".join(f"'{l}'" for l in CODE_LANGUAGES)
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter})"
+    ).fetchone()[0]
+    if total == 0:
+        return 0.0
+    connected = conn.execute(f"""
+        SELECT COUNT(DISTINCT id) FROM (
+            SELECT source_file_id as id FROM file_edges
+            UNION
+            SELECT target_file_id as id FROM file_edges
+        )
+    """).fetchone()[0]
+    return round(((total - connected) / total) * 100, 1)
+
+
 def measure(name, index_time):
     repo_dir = BENCH_DIR / name
     conn = open_db(repo_dir)
@@ -347,6 +405,12 @@ def measure(name, index_time):
     edge_kinds = edge_kind_breakdown(conn)
 
     layers, cycles, clusters = graph_richness(conn, repo_dir)
+
+    # New enriched metrics
+    xfile_ratio = cross_file_edge_ratio(conn)
+    reachability = symbol_reachability(conn)
+    qname_usage = qualified_name_usage(conn)
+    orphan_rate = orphan_file_rate(conn)
 
     conn.close()
 
@@ -371,6 +435,10 @@ def measure(name, index_time):
             "layers": layers,
             "cycles": cycles,
             "clusters": clusters,
+            "cross_file_edge_pct": xfile_ratio,
+            "symbol_reachability_pct": reachability,
+            "qualified_name_pct": qname_usage,
+            "orphan_file_pct": orphan_rate,
         },
         "breakdown": {
             "languages": langs,
@@ -482,7 +550,13 @@ def validate_commands(name):
             passed += 1
             # Count output lines for context
             out_lines = len(stdout.strip().split("\n")) if stdout.strip() else 0
-            print(f"    ok    {elapsed:>6.1f}s  {full_cmd}  ({out_lines} lines)")
+            # Warn if output looks suspect
+            min_expected = {"map": 3, "health": 3, "file": 3, "describe": 10,
+                           "layers": 3, "clusters": 3, "fan": 3, "sketch": 1}
+            warn = ""
+            if cmd_name in min_expected and out_lines < min_expected[cmd_name]:
+                warn = f"  [WARN: only {out_lines} lines]"
+            print(f"    ok    {elapsed:>6.1f}s  {full_cmd}  ({out_lines} lines){warn}")
         else:
             snippet = err.strip().split("\n")
             # Get last meaningful error line
@@ -645,6 +719,11 @@ def print_repo_card(name, data):
     print(f"  E/S: {q['edge_density']:.2f} | Dead: {q['dead_high_conf']} | "
           f"Hidden coupling: {q['hidden_coupling_pct']:.1f}%")
     print(f"  Layers: {q['layers']} | Cycles: {q['cycles']} | Clusters: {q['clusters']}")
+    # Enriched quality metrics
+    print(f"  Cross-file edges: {q.get('cross_file_edge_pct', 0)}% | "
+          f"Reachability: {q.get('symbol_reachability_pct', 0)}% | "
+          f"Qualified: {q.get('qualified_name_pct', 0)}% | "
+          f"Orphan files: {q.get('orphan_file_pct', 0)}%")
 
     # Score breakdown with bars
     print(f"  Score breakdown:")
@@ -697,6 +776,30 @@ def print_table(results):
         print(f"{'AVERAGE':<14} {'':>4} {'':>6} {'':>7} {'':>7} "
               f"{'':>5} {'':>6} {'':>6} {'':>5} {'':>4} "
               f"{'':>5} {avg:>6.2f}")
+    print()
+
+
+def print_enriched_table(results):
+    """Enriched metrics table showing deeper quality indicators."""
+    hdr = (f"{'Repo':<14} {'XFile%':>6} {'Reach%':>6} {'Qual%':>5} "
+           f"{'Orphan%':>7} {'Dead':>5} {'HidCpl%':>7} {'Score':>6}")
+    print()
+    print("Enriched Quality Metrics:")
+    print(hdr)
+    print("-" * len(hdr))
+    for name, data in sorted(results.items()):
+        if data is None:
+            continue
+        q = data["quality"]
+        s = data["score"]
+        print(
+            f"{name:<14} {q.get('cross_file_edge_pct', 0):>6.1f} "
+            f"{q.get('symbol_reachability_pct', 0):>6.1f} "
+            f"{q.get('qualified_name_pct', 0):>5.1f} "
+            f"{q.get('orphan_file_pct', 0):>7.1f} "
+            f"{q['dead_high_conf']:>5} "
+            f"{q['hidden_coupling_pct']:>7.1f} {s:>6.2f}"
+        )
     print()
 
 
@@ -910,6 +1013,9 @@ def main():
     print(f"  COMPARISON TABLE")
     print(f"{'=' * 65}")
     print_table(results)
+
+    # Enriched quality metrics
+    print_enriched_table(results)
 
     # Per-language summary
     print_language_summary(results)
