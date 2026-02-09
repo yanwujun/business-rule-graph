@@ -34,11 +34,14 @@ def layers():
         for layer_info in formatted:
             n = layer_info["layer"]
             symbols = layer_info["symbols"]
-            names = [f"{abbrev_kind(s['kind'])} {s['name']}" for s in symbols]
-            preview = truncate_lines(names, 10)
-            click.echo(f"\n  Layer {n} ({len(symbols)} symbols):")
-            for line in preview:
-                click.echo(f"    {line}")
+            if n == 0 and len(symbols) > 50:
+                click.echo(f"\n  Layer 0 ({len(symbols)} symbols): base layer (no dependencies)")
+            else:
+                names = [f"{abbrev_kind(s['kind'])} {s['name']}" for s in symbols]
+                preview = truncate_lines(names, 10)
+                click.echo(f"\n  Layer {n} ({len(symbols)} symbols):")
+                for line in preview:
+                    click.echo(f"    {line}")
 
         # --- Violations ---
         violations = find_violations(G, layer_map)

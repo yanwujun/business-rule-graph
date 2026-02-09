@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from roam.db.connection import open_db, find_project_root, get_db_path
@@ -80,11 +81,12 @@ class Indexer:
             project_root = find_project_root()
         self.root = Path(project_root).resolve()
 
-    def run(self, force: bool = False):
+    def run(self, force: bool = False, verbose: bool = False):
         """Run the indexing pipeline.
 
         Args:
             force: If True, re-index all files. Otherwise, only changed files.
+            verbose: If True, show detailed warnings during indexing.
         """
         _log(f"Indexing {self.root}")
 
@@ -106,14 +108,15 @@ class Indexer:
 
         lock_path.write_text(str(os.getpid()))
         try:
-            self._do_run(force)
+            self._do_run(force, verbose=verbose)
         finally:
             try:
                 lock_path.unlink()
             except OSError:
                 pass
 
-    def _do_run(self, force: bool):
+    def _do_run(self, force: bool, verbose: bool = False):
+        t0 = time.monotonic()
         # 1. Discover files
         _log("Discovering files...")
         all_files = discover_files(self.root)
@@ -173,7 +176,8 @@ class Indexer:
                     with open(full_path, "rb") as f:
                         source = f.read()
                 except OSError as e:
-                    _log(f"  Warning: Could not read {rel_path}: {e}")
+                    if verbose:
+                        _log(f"  Warning: Could not read {rel_path}: {e}")
                     continue
 
                 line_count = _count_lines(source)
@@ -213,7 +217,8 @@ class Indexer:
                     try:
                         extractor = get_extractor(lang)
                     except Exception as e:
-                        _log(f"  Warning: No extractor for {lang}: {e}")
+                        if verbose:
+                            _log(f"  Warning: No extractor for {lang}: {e}")
                         extractor = None
 
                 if extractor is None:
@@ -278,7 +283,8 @@ class Indexer:
                                 ref["source_file"] = rel_path
                                 all_references.append(ref)
                     except Exception as e:
-                        _log(f"  Warning: generic extractor failed for {rel_path}: {e}")
+                        if verbose:
+                            _log(f"  Warning: generic extractor failed for {rel_path}: {e}")
 
             # Also load existing symbols from DB (for incremental)
             if not force:
@@ -342,7 +348,8 @@ class Indexer:
                             try:
                                 extractor = get_extractor(lang)
                             except Exception as e:
-                                _log(f"  Warning: no extractor for {lang}: {e}")
+                                if verbose:
+                                    _log(f"  Warning: no extractor for {lang}: {e}")
                         if extractor is None:
                             continue
                         # Call extract_symbols first to populate _pending_inherits
@@ -350,7 +357,8 @@ class Indexer:
                         try:
                             extractor.extract_symbols(tree, parsed_source, rel_path)
                         except Exception as e:
-                            _log(f"  Warning: re-extract symbols failed for {rel_path}: {e}")
+                            if verbose:
+                                _log(f"  Warning: re-extract symbols failed for {rel_path}: {e}")
                         refs = extract_references(tree, parsed_source, rel_path, extractor)
                         for ref in refs:
                             ref["source_file"] = rel_path
@@ -365,7 +373,8 @@ class Indexer:
                                         ref["source_file"] = rel_path
                                         all_references.append(ref)
                             except Exception as e:
-                                _log(f"  Warning: generic extractor failed for {rel_path}: {e}")
+                                if verbose:
+                                    _log(f"  Warning: generic extractor failed for {rel_path}: {e}")
 
             # 6. Resolve references into edges
             _log("Resolving references...")
@@ -439,7 +448,8 @@ class Indexer:
                 _log(f"  Parse issues: {error_summary}")
 
             # Summary
+            elapsed = time.monotonic() - t0
             file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
             edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-            _log(f"Done. {file_count} files, {sym_count} symbols, {edge_count} edges.")
+            _log(f"Done. {file_count} files, {sym_count} symbols, {edge_count} edges. ({elapsed:.1f}s)")

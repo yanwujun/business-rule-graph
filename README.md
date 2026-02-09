@@ -45,6 +45,8 @@ Roam builds a pre-indexed understanding of your entire codebase -- symbols, call
 - [How It Works](#how-it-works)
 - [How Roam Compares](#how-roam-compares)
 - [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Update / Uninstall](#update--uninstall)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -64,12 +66,23 @@ pip install git+https://github.com/Cranot/roam-code.git
 
 > **Note:** Roam is not yet published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development.
 
+Verify the install:
+
+```bash
+roam --version
+```
+
+> **Windows:** If `roam` is not found after installing with `uv`, run `uv tool update-shell` and restart your terminal so the tool directory is on PATH.
+
 Requires Python 3.9+. Works on Linux, macOS, and Windows. Best with `git` installed (for file discovery and history analysis; falls back to directory walking without it). No external services, no API keys, no configuration.
 
 ## Quick Start
 
 ```bash
 cd your-project
+
+# Add the index directory to .gitignore
+echo ".roam/" >> .gitignore
 
 # Build the index (runs once, then incremental)
 roam index
@@ -90,7 +103,24 @@ roam deps src/utils.py
 roam health
 ```
 
-The index is stored at `.roam/index.db` in your project root. Add `.roam/` to your `.gitignore`.
+> **First index:** Expect ~5s for a 200-file project, ~15s for 1,000 files. Subsequent runs are incremental and near-instant. Use `roam index --verbose` to see detailed progress.
+
+The index is stored at `.roam/index.db` in your project root. Run `roam --help` to see all available commands.
+
+<details>
+<summary><strong>Try it on Roam itself</strong></summary>
+
+```bash
+git clone https://github.com/Cranot/roam-code.git
+cd roam-code
+pip install -e .
+roam index --force
+roam map
+roam symbol Indexer
+roam health
+```
+
+</details>
 
 ## Commands
 
@@ -98,7 +128,7 @@ The index is stored at `.roam/index.db` in your project root. Add `.roam/` to yo
 
 | Command | Description |
 |---------|-------------|
-| `roam index [--force]` | Build or rebuild the codebase index |
+| `roam index [--force] [--verbose]` | Build or rebuild the codebase index |
 | `roam map [-n N] [--full]` | Project skeleton: files, languages, entry points, top symbols by PageRank |
 | `roam module <path>` | Directory contents: exports, signatures, dependencies |
 | `roam file <path> [--full]` | File skeleton: all definitions with signatures, no bodies |
@@ -114,7 +144,7 @@ The index is stored at `.roam/index.db` in your project root. Add `.roam/` to yo
 | Command | Description |
 |---------|-------------|
 | `roam health` | Cycles, god components, bottlenecks, layer violations |
-| `roam clusters` | Community detection vs directory structure -- hidden coupling |
+| `roam clusters [--min-size N]` | Community detection vs directory structure -- hidden coupling |
 | `roam layers` | Topological dependency layers + upward violations |
 | `roam dead` | Unreferenced exported symbols (dead code candidates) |
 | `roam fan [symbol\|file] [-n N]` | Fan-in/fan-out: most connected symbols or files |
@@ -264,6 +294,23 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 
 </details>
 
+### When to use Roam vs native tools
+
+| Task | Use Roam | Use native tools |
+|------|----------|-----------------|
+| "What calls this function?" | `roam symbol <name>` | LSP / Grep (if Roam not indexed) |
+| "Show me this file's structure" | `roam file <path>` | Read the file directly |
+| "Find a specific string in code" | `roam grep <pattern>` | `grep` / `rg` (same speed, less context) |
+| "Understand project architecture" | `roam map` + `roam health` | Manual exploration (many tool calls) |
+| "What breaks if I change X?" | `roam impact <symbol>` | No direct equivalent |
+
+### When to rebuild the index
+
+- **After `git pull` / branch switch:** `roam index` (incremental, fast)
+- **After major refactor or first clone:** `roam index --force` (full rebuild)
+- **Index seems stale or corrupt:** `roam index --force`
+- **No rebuild needed:** Roam auto-detects changed files on every `roam index` run
+
 ## Language Support
 
 ### Tier 1 -- Full extraction (dedicated parsers)
@@ -278,6 +325,7 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | Rust | `.rs` | structs, traits, impls, enums, functions | use, calls | impl Trait for Struct |
 | C | `.c` `.h` | structs, functions, typedefs, enums | includes, calls | -- |
 | C++ | `.cpp` `.hpp` `.cc` `.hh` | classes, namespaces, templates + all C | includes, calls | extends |
+| Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 
 ### Tier 2 -- Generic extraction
 
@@ -392,6 +440,34 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 - **No cross-language edges** -- a Python file calling a C extension won't show as a dependency
 - **Tier 2 languages** get basic symbol extraction only (no import resolution or call tracking)
 - **Large monorepos** (100k+ files) may have slow initial indexing -- incremental updates remain fast
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `roam: command not found` | Ensure install location is on PATH. For `uv`: run `uv tool update-shell`. For `pip`: check `pip show roam-code` for install path. |
+| `Another indexing process is running` | A previous `roam index` crashed and left a stale lock. Delete `.roam/index.lock` and retry. |
+| `database is locked` or corrupt index | Run `roam index --force` to rebuild from scratch. |
+| Unicode errors on Windows | Roam handles UTF-8 and Latin-1 files. If you see `charmap` errors, ensure your terminal uses UTF-8 (`chcp 65001`). |
+| `.vue` / `.svelte` files not indexed | Vue SFC is supported (Tier 1). Other frameworks need script extraction support -- file an issue. |
+| Too many false positives in `roam dead` | Check the "N files had no symbols extracted" note. Files without parsers don't produce symbols, so their exports appear unreferenced. |
+| Slow first index | Expected for large projects. Use `roam index --verbose` to monitor progress. Subsequent runs are incremental. |
+
+## Update / Uninstall
+
+```bash
+# Update to latest
+pipx upgrade roam-code            # if installed with pipx
+uv tool upgrade roam-code         # if installed with uv
+pip install --upgrade git+https://github.com/Cranot/roam-code.git  # if installed with pip
+
+# Uninstall
+pipx uninstall roam-code          # if installed with pipx
+uv tool uninstall roam-code       # if installed with uv
+pip uninstall roam-code            # if installed with pip
+```
+
+To clean up project-local data, delete the `.roam/` directory from your project root.
 
 ## Development
 

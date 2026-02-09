@@ -671,6 +671,68 @@ def polyglot(tmp_path_factory):
         'data class Point(val x: Double, val y: Double)\n'
     )
 
+    # ---- Vue SFC ----
+    vue_dir = proj / "vue"
+    vue_dir.mkdir()
+    (vue_dir / "UserCard.vue").write_text(
+        '<template>\n'
+        '  <div class="user-card">{{ user.name }}</div>\n'
+        '</template>\n'
+        '\n'
+        '<script lang="ts">\n'
+        'import { defineComponent } from "vue";\n'
+        '\n'
+        'interface UserData {\n'
+        '  name: string;\n'
+        '  email: string;\n'
+        '}\n'
+        '\n'
+        'export default defineComponent({\n'
+        '  name: "UserCard",\n'
+        '  props: {\n'
+        '    user: { type: Object as () => UserData, required: true },\n'
+        '  },\n'
+        '});\n'
+        '</script>\n'
+        '\n'
+        '<style scoped>\n'
+        '.user-card { padding: 8px; }\n'
+        '</style>\n'
+    )
+    (vue_dir / "Counter.vue").write_text(
+        '<template>\n'
+        '  <button @click="increment">{{ count }}</button>\n'
+        '</template>\n'
+        '\n'
+        '<script setup lang="ts">\n'
+        'import { ref } from "vue";\n'
+        '\n'
+        'const count = ref(0);\n'
+        '\n'
+        'function increment(): void {\n'
+        '  count.value++;\n'
+        '}\n'
+        '</script>\n'
+    )
+    (vue_dir / "Legacy.vue").write_text(
+        '<template>\n'
+        '  <div>{{ message }}</div>\n'
+        '</template>\n'
+        '\n'
+        '<script>\n'
+        'export default {\n'
+        '  data() {\n'
+        '    return { message: "hello" };\n'
+        '  },\n'
+        '  methods: {\n'
+        '    greet() {\n'
+        '      return this.message;\n'
+        '    },\n'
+        '  },\n'
+        '};\n'
+        '</script>\n'
+    )
+
     git_init(proj)
     out, rc = roam("index", "--force", cwd=proj)
     assert rc == 0, f"Index failed: {out}"
@@ -1032,6 +1094,32 @@ class TestKotlin:
     def test_data_class(self, polyglot):
         out, _ = roam("search", "Point", cwd=polyglot)
         assert "Point" in out
+
+
+# ============================================================================
+# VUE SFC TESTS
+# ============================================================================
+
+class TestVueSFC:
+    def test_vue_file_indexed(self, polyglot):
+        """Vue SFC files should be discovered and indexed."""
+        out, _ = roam("file", "vue/UserCard.vue", cwd=polyglot)
+        assert "UserCard.vue" in out
+
+    def test_vue_ts_interface_extracted(self, polyglot):
+        """TypeScript interface inside <script lang='ts'> should be extracted."""
+        out, _ = roam("search", "UserData", cwd=polyglot)
+        assert "UserData" in out
+
+    def test_vue_script_setup_function(self, polyglot):
+        """Functions in <script setup> should be extracted."""
+        out, _ = roam("search", "increment", cwd=polyglot)
+        assert "increment" in out
+
+    def test_vue_js_fallback(self, polyglot):
+        """Vue SFC without lang attr should parse as JavaScript."""
+        out, _ = roam("file", "vue/Legacy.vue", cwd=polyglot)
+        assert "Legacy.vue" in out
 
 
 # ============================================================================

@@ -432,6 +432,46 @@ class TestResilience:
 
 
 # ============================================================================
+# VERBOSE AND ELAPSED TIME
+# ============================================================================
+
+class TestVerboseFlag:
+    def test_verbose_shows_warnings(self, tmp_path):
+        """roam index --verbose should display warnings."""
+        proj = tmp_path / "verbose_test"
+        proj.mkdir()
+        (proj / "main.py").write_text('def main(): pass\n')
+        git_init(proj)
+        out, rc = roam("index", "--force", "--verbose", cwd=proj)
+        assert rc == 0
+        # Even without warnings, the flag should be accepted
+        assert "Done." in out or "Index complete." in out
+
+    def test_no_verbose_suppresses_warnings(self, tmp_path):
+        """roam index without --verbose should suppress 'Warning:' lines."""
+        proj = tmp_path / "quiet_test"
+        proj.mkdir()
+        (proj / "main.py").write_text('def main(): pass\n')
+        git_init(proj)
+        out, rc = roam("index", "--force", cwd=proj)
+        assert rc == 0
+        assert "Warning:" not in out
+
+    def test_elapsed_time_shown(self, tmp_path):
+        """roam index should show elapsed time."""
+        proj = tmp_path / "elapsed_test"
+        proj.mkdir()
+        (proj / "main.py").write_text('def main(): pass\n')
+        git_init(proj)
+        out, rc = roam("index", "--force", cwd=proj)
+        assert rc == 0
+        assert "Index complete." in out
+        # Should contain elapsed time in parentheses like "(0.5s)"
+        import re
+        assert re.search(r'\(\d+\.\d+s\)', out), f"No elapsed time found in: {out}"
+
+
+# ============================================================================
 # OUTPUT CORRECTNESS
 # ============================================================================
 

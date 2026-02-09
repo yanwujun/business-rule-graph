@@ -38,3 +38,11 @@ def dead():
             table_rows,
             budget=50,
         ))
+
+        # Check for files with no extracted symbols (may cause false positives)
+        unparsed = conn.execute(
+            "SELECT COUNT(*) FROM files f "
+            "WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)"
+        ).fetchone()[0]
+        if unparsed:
+            click.echo(f"\nNote: {unparsed} files had no symbols extracted (may cause false positives)")

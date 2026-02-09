@@ -16,7 +16,8 @@ def _ensure_index():
 
 
 @click.command()
-def clusters():
+@click.option('--min-size', default=3, show_default=True, help='Hide clusters smaller than this')
+def clusters(min_size):
     """Show code clusters and directory mismatches."""
     _ensure_index()
     with open_db(readonly=True) as conn:
@@ -24,21 +25,32 @@ def clusters():
 
         click.echo("=== Clusters ===")
         if rows:
-            table_rows = []
-            for r in rows:
-                members = r["members"] or ""
-                preview = members[:80] + "..." if len(members) > 80 else members
-                table_rows.append([
-                    str(r["cluster_id"]),
-                    r["cluster_label"],
-                    str(r["size"]),
-                    preview,
-                ])
-            click.echo(format_table(
-                ["ID", "Label", "Size", "Members"],
-                table_rows,
-                budget=30,
-            ))
+            # Filter clusters by min-size
+            visible = [r for r in rows if r["size"] >= min_size]
+            hidden_count = len(rows) - len(visible)
+            visible_ids = {r["cluster_id"] for r in visible}
+
+            if visible:
+                table_rows = []
+                for r in visible:
+                    members = r["members"] or ""
+                    preview = members[:80] + "..." if len(members) > 80 else members
+                    table_rows.append([
+                        str(r["cluster_id"]),
+                        r["cluster_label"],
+                        str(r["size"]),
+                        preview,
+                    ])
+                click.echo(format_table(
+                    ["ID", "Label", "Size", "Members"],
+                    table_rows,
+                    budget=30,
+                ))
+            else:
+                click.echo("  (no clusters with size >= {})".format(min_size))
+
+            if hidden_count:
+                click.echo(f"  ({hidden_count} clusters with fewer than {min_size} members hidden)")
         else:
             click.echo("  (no clusters detected)")
             return
@@ -46,6 +58,9 @@ def clusters():
         # --- Mismatches ---
         click.echo("\n=== Directory Mismatches (hidden coupling) ===")
         mismatches = compare_with_directories(conn)
+        if mismatches:
+            # Only show mismatches for displayed clusters
+            mismatches = [m for m in mismatches if m["cluster_id"] in visible_ids]
         if mismatches:
             m_rows = []
             for m in mismatches:
