@@ -133,7 +133,7 @@ UNREFERENCED_EXPORTS = """
     JOIN files f ON s.file_id = f.id
     WHERE s.is_exported = 1
     AND s.id NOT IN (SELECT target_id FROM edges)
-    AND s.kind IN ('function', 'class', 'method', 'constant')
+    AND s.kind IN ('function', 'class', 'method')
     ORDER BY f.path, s.line_start
 """
 

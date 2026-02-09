@@ -112,12 +112,17 @@ def _find_enclosing_symbol(conn, file_path, line_num):
 @click.command("grep")
 @click.argument("pattern")
 @click.option("-g", "--glob", "glob_filter", default=None,
-              help="Filter files by glob pattern (e.g. '*.php')")
+              help="Filter by file type or glob (e.g. 'vue', '.ts', '*.php')")
 @click.option("-n", "count", default=50, help="Max results to show")
 def grep_cmd(pattern, glob_filter, count):
     """Context-enriched grep: search with enclosing symbol annotation."""
     _ensure_index()
     root = find_project_root()
+
+    # Normalize shorthand extensions: "ts" or ".ts" → "*.ts"
+    if glob_filter and "*" not in glob_filter and "?" not in glob_filter:
+        ext = glob_filter if glob_filter.startswith(".") else f".{glob_filter}"
+        glob_filter = f"*{ext}"
 
     matches = _grep_files(pattern, root, glob_filter)
     if not matches:
