@@ -39,7 +39,7 @@ ALL_COMMANDS = [
     "index", "map", "file", "symbol", "trace", "deps", "module", "health",
     "clusters", "layers", "weather", "dead", "search", "grep", "uses",
     "impact", "owner", "coupling", "fan", "diff", "describe", "test-map",
-    "sketch", "context", "safe-delete", "pr-risk", "split", "risk",
+    "sketch", "context", "safe-delete", "pr-risk", "split", "risk", "why",
 ]
 
 BENCH_DIR = Path(__file__).resolve().parent / "bench-repos"
@@ -552,6 +552,7 @@ def validate_commands(name):
         "pr-risk":     ["pr-risk"],
         "split":       ["split", file_path] if file_path else None,
         "risk":        ["risk"],
+        "why":         ["why", sym_name] if sym_name else None,
     }
 
     passed = 0

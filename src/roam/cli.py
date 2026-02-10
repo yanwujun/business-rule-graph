@@ -42,6 +42,7 @@ _COMMANDS = {
     "pr-risk":     ("roam.commands.cmd_pr_risk",     "pr_risk"),
     "split":       ("roam.commands.cmd_split",      "split"),
     "risk":        ("roam.commands.cmd_risk",       "risk"),
+    "why":         ("roam.commands.cmd_why",        "why"),
 }
 
 

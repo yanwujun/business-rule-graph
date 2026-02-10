@@ -1509,7 +1509,7 @@ class TestErrorHandling:
             "dead", "search", "grep", "uses", "impact", "owner",
             "coupling", "fan", "diff", "describe", "test-map",
             "sketch", "context", "safe-delete", "pr-risk", "split",
-            "risk",
+            "risk", "why",
         ]
         for cmd in commands:
             out, rc = roam(cmd, "--help")
@@ -2028,3 +2028,75 @@ class TestPrRisk:
         """roam pr-risk --help should work."""
         out, rc = roam("pr-risk", "--help")
         assert rc == 0
+
+
+class TestWhy:
+    """Tests for the 'why' command."""
+
+    def test_why_basic(self, polyglot):
+        """roam why should show role, reach, critical, cluster, verdict."""
+        out, rc = roam("why", "Animal", cwd=polyglot)
+        assert rc == 0
+        assert "ROLE:" in out
+        assert "REACH:" in out
+        assert "CRITICAL:" in out
+        assert "VERDICT:" in out
+
+    def test_why_shows_cluster(self, polyglot):
+        """roam why should show cluster membership."""
+        out, rc = roam("why", "Animal", cwd=polyglot)
+        assert rc == 0
+        assert "CLUSTER:" in out
+
+    def test_why_json(self, polyglot):
+        """roam why --json should return valid JSON with expected fields."""
+        import json
+        out, rc = roam("--json", "why", "Animal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "symbols" in data
+        assert len(data["symbols"]) == 1
+        sym = data["symbols"][0]
+        assert "role" in sym
+        assert "fan_in" in sym
+        assert "fan_out" in sym
+        assert "reach" in sym
+        assert "critical" in sym
+        assert "verdict" in sym
+
+    def test_why_batch(self, polyglot):
+        """roam why with multiple symbols should produce batch table."""
+        out, rc = roam("why", "Animal", "speak", "_internal", cwd=polyglot)
+        assert rc == 0
+        # Batch mode outputs a table with all symbol names
+        assert "Animal" in out
+        assert "speak" in out
+
+    def test_why_batch_json(self, polyglot):
+        """roam why --json with multiple symbols should return all."""
+        import json
+        out, rc = roam("--json", "why", "Animal", "speak", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert len(data["symbols"]) == 2
+
+    def test_why_not_found(self, polyglot):
+        """roam why with unknown symbol should fail."""
+        out, rc = roam("why", "NonExistentThing999", cwd=polyglot)
+        assert rc != 0
+
+    def test_why_role_classification(self, polyglot):
+        """roam why should classify roles correctly."""
+        import json
+        out, rc = roam("--json", "why", "_internal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        sym = data["symbols"][0]
+        # _internal has no callers, should be Leaf
+        assert sym["role"] == "Leaf"
+
+    def test_why_help(self):
+        """roam why --help should work."""
+        out, rc = roam("why", "--help")
+        assert rc == 0
+        assert "role" in out.lower() or "verdict" in out.lower()

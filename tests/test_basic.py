@@ -130,6 +130,17 @@ def test_pr_risk(roam_project):
     assert result.returncode == 0
 
 
+def test_why(roam_project):
+    result = _run_roam(["why", "add"], roam_project)
+    assert result.returncode == 0
+    assert "ROLE:" in result.stdout or "role" in result.stdout
+
+
+def test_why_batch(roam_project):
+    result = _run_roam(["why", "add", "multiply", "main"], roam_project)
+    assert result.returncode == 0
+
+
 def test_version():
     result = subprocess.run(
         [sys.executable, "-m", "roam", "--version"],
