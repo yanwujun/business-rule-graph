@@ -247,7 +247,9 @@ def same_file_misresolutions(conn):
 
 
 def cross_file_ambiguity(conn):
-    """Edges where the target symbol's name appears in >1 distinct file."""
+    """Edges where the target symbol's name appears in >1 distinct file,
+    AND the qualified_name doesn't disambiguate (qualified_name == name or
+    qualified_name also appears in >1 file)."""
     conn.execute("""
         CREATE TEMP TABLE IF NOT EXISTS _ambig_cross_file AS
         SELECT name
@@ -255,11 +257,27 @@ def cross_file_ambiguity(conn):
         GROUP BY name
         HAVING COUNT(DISTINCT file_id) > 1
     """)
+    conn.execute("""
+        CREATE TEMP TABLE IF NOT EXISTS _ambig_qualified AS
+        SELECT qualified_name
+        FROM symbols
+        GROUP BY qualified_name
+        HAVING COUNT(DISTINCT file_id) > 1
+    """)
+    # Edge is truly ambiguous only if:
+    # 1. Target name appears in >1 file
+    # 2. AND target's qualified_name doesn't help (equals name, or also in >1 file)
     row = conn.execute("""
         SELECT COUNT(*) FROM edges e
         JOIN symbols t ON e.target_id = t.id
         WHERE EXISTS (
             SELECT 1 FROM _ambig_cross_file a WHERE a.name = t.name
+        )
+        AND (
+            t.qualified_name = t.name
+            OR EXISTS (
+                SELECT 1 FROM _ambig_qualified q WHERE q.qualified_name = t.qualified_name
+            )
         )
     """).fetchone()
     return row[0]
