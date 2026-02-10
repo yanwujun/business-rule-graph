@@ -103,6 +103,33 @@ def test_layers(roam_project):
     assert result.returncode == 0
 
 
+def test_context(roam_project):
+    result = _run_roam(["context", "main"], roam_project)
+    assert result.returncode == 0
+    assert "Context for" in result.stdout
+
+
+def test_safe_delete(roam_project):
+    result = _run_roam(["safe-delete", "multiply"], roam_project)
+    assert result.returncode == 0
+    assert "SAFE" in result.stdout
+
+
+def test_split(roam_project):
+    result = _run_roam(["split", "main.py"], roam_project)
+    assert result.returncode == 0
+
+
+def test_risk(roam_project):
+    result = _run_roam(["risk"], roam_project)
+    assert result.returncode == 0
+
+
+def test_pr_risk(roam_project):
+    result = _run_roam(["pr-risk"], roam_project)
+    assert result.returncode == 0
+
+
 def test_version():
     result = subprocess.run(
         [sys.executable, "-m", "roam", "--version"],

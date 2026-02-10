@@ -7,27 +7,48 @@ import sqlite3
 import networkx as nx
 
 
+_EDGE_WEIGHTS = {
+    "call": 1.0,
+    "uses_trait": 1.0,
+    "implements": 1.0,
+    "inherits": 1.0,
+    "uses": 1.0,
+    "template": 1.0,
+    "import": 1.1,
+}
+
+
+def _ensure_weights(G: nx.DiGraph) -> None:
+    """Set edge weights based on kind, favoring call edges over imports."""
+    for _u, _v, data in G.edges(data=True):
+        if "weight" not in data:
+            data["weight"] = _EDGE_WEIGHTS.get(data.get("kind", ""), 2)
+
+
 def find_path(
     G: nx.DiGraph, source_id: int, target_id: int
 ) -> list[int] | None:
     """Find the shortest path from *source_id* to *target_id*.
 
+    Prefers call edges over import edges via edge-kind weighting.
     Tries the directed graph first; if no directed path exists, falls back to
     the undirected projection.  Returns ``None`` when no path exists at all.
     """
     if source_id not in G or target_id not in G:
         return None
 
-    # Directed attempt
+    _ensure_weights(G)
+
+    # Directed attempt (weighted)
     try:
-        return list(nx.shortest_path(G, source_id, target_id))
+        return list(nx.shortest_path(G, source_id, target_id, weight="weight"))
     except nx.NetworkXNoPath:
         pass
 
-    # Undirected fallback
+    # Undirected fallback (weighted)
     try:
         undirected = G.to_undirected()
-        return list(nx.shortest_path(undirected, source_id, target_id))
+        return list(nx.shortest_path(undirected, source_id, target_id, weight="weight"))
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return None
 

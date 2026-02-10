@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import SEARCH_SYMBOLS
-from roam.output.formatter import abbrev_kind, loc, format_table, KIND_ABBREV, to_json
+from roam.output.formatter import abbrev_kind, loc, format_signature, format_table, KIND_ABBREV, to_json
 
 
 def _ensure_index():
@@ -61,8 +61,11 @@ def search(ctx, pattern, full, kind_filter):
                 "results": [
                     {
                         "name": r["name"],
+                        "qualified_name": r["qualified_name"] or "",
                         "kind": r["kind"],
+                        "signature": r["signature"] or "",
                         "refs": ref_counts.get(r["id"], 0),
+                        "pagerank": round(r["pagerank"], 4) if r["pagerank"] else 0,
                         "location": loc(r["file_path"], r["line_start"]),
                     }
                     for r in rows
@@ -84,14 +87,22 @@ def search(ctx, pattern, full, kind_filter):
         table_rows = []
         for r in rows:
             refs = ref_counts.get(r["id"], 0)
+            pr = r["pagerank"] or 0
+            pr_str = f"{pr:.4f}" if pr > 0 else ""
+            # Show qualified name when it differs (helps disambiguate)
+            qn = r["qualified_name"] or ""
+            name_col = qn if qn and qn != r["name"] else r["name"]
+            sig = format_signature(r["signature"], max_len=40) if r["signature"] else ""
             table_rows.append([
-                r["name"],
+                name_col,
                 abbrev_kind(r["kind"]),
+                sig,
                 str(refs),
+                pr_str,
                 loc(r["file_path"], r["line_start"]),
             ])
         click.echo(format_table(
-            ["Name", "Kind", "Refs", "Location"],
+            ["Name", "Kind", "Sig", "Refs", "PR", "Location"],
             table_rows,
             budget=0 if full else 50,
         ))

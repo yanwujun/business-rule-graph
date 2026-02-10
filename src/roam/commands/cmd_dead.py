@@ -1,10 +1,66 @@
 """Show unreferenced exported symbols (dead code)."""
 
+import os
+
 import click
 
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import UNREFERENCED_EXPORTS
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+
+
+_ENTRY_NAMES = {
+    # Generic entry points
+    "main", "app", "serve", "server", "setup", "run", "cli",
+    "handler", "middleware", "route", "index", "init",
+    "register", "boot", "start", "execute", "configure",
+    "command", "worker", "job", "task", "listener",
+    # Vue lifecycle hooks
+    "mounted", "created", "beforeMount", "beforeDestroy",
+    "beforeCreate", "activated", "deactivated",
+    "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
+    "onActivated", "onDeactivated", "onUpdated", "onBeforeUpdate",
+    # React lifecycle
+    "componentDidMount", "componentWillUnmount", "componentDidUpdate",
+    # Angular lifecycle
+    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
+    # Test lifecycle
+    "setUp", "tearDown", "beforeEach", "afterEach", "beforeAll", "afterAll",
+}
+_ENTRY_FILE_BASES = {"server", "app", "main", "cli", "index", "manage",
+                      "boot", "bootstrap", "start", "entry", "worker"}
+_API_PREFIXES = ("get", "use", "create", "validate", "fetch", "update",
+                 "delete", "find", "check", "make", "build", "parse")
+
+
+def _dead_action(r, file_imported):
+    """Compute actionable verdict for a dead symbol."""
+    name = r["name"]
+    name_lower = name.lower()
+    base = os.path.basename(r["file_path"]).lower()
+    name_no_ext = os.path.splitext(base)[0]
+
+    # Entry point / lifecycle hooks (check original case for camelCase hooks)
+    if name in _ENTRY_NAMES or name_lower in _ENTRY_NAMES:
+        return "INTENTIONAL"
+
+    # Python dunders — always intentional
+    if name.startswith("__") and name.endswith("__"):
+        return "INTENTIONAL"
+
+    # File is an entry point and not imported — symbols here are likely intentional
+    if not file_imported and name_no_ext in _ENTRY_FILE_BASES:
+        return "INTENTIONAL"
+
+    # API naming → review before deleting
+    if any(name_lower.startswith(p) for p in _API_PREFIXES):
+        return "REVIEW"
+
+    # Barrel/index file → likely re-exported for public API
+    if base.startswith("index.") or base == "__init__.py":
+        return "REVIEW"
+
+    return "SAFE"
 
 
 def _ensure_index():
@@ -93,22 +149,34 @@ def dead(ctx, show_all):
             else:
                 low.append(r)
 
+        # Compute action verdicts for all dead symbols
+        all_dead = [(r, _dead_action(r, r["file_id"] in imported_files)) for r in high + low]
+        n_safe = sum(1 for _, a in all_dead if a == "SAFE")
+        n_review = sum(1 for _, a in all_dead if a == "REVIEW")
+        n_intent = sum(1 for _, a in all_dead if a == "INTENTIONAL")
+
         if json_mode:
             click.echo(to_json({
+                "summary": {"safe": n_safe, "review": n_review, "intentional": n_intent},
                 "high_confidence": [
                     {"name": r["name"], "kind": r["kind"],
-                     "location": loc(r["file_path"], r["line_start"])}
+                     "location": loc(r["file_path"], r["line_start"]),
+                     "action": _dead_action(r, True)}
                     for r in high
                 ],
                 "low_confidence": [
                     {"name": r["name"], "kind": r["kind"],
-                     "location": loc(r["file_path"], r["line_start"])}
+                     "location": loc(r["file_path"], r["line_start"]),
+                     "action": _dead_action(r, False)}
                     for r in low
                 ],
             }))
             return
 
-        click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===\n")
+        click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===")
+        click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, "
+                    f"{n_intent} likely intentional")
+        click.echo()
 
         # Build imported-by lookup for high-confidence results
         if high:
@@ -142,15 +210,20 @@ def dead(ctx, show_all):
                 imp_list = importers_by_file.get(r["file_id"], [])
                 n_importers = len(imp_list)
                 n_siblings = referenced_counts.get(r["file_id"], 0)
-                context = f"{n_importers} file importers, {n_siblings} sibling refs"
+                if n_siblings > 0:
+                    reason = f"{n_importers} importers use {n_siblings} siblings, skip this"
+                else:
+                    reason = f"{n_importers} importers, none use any export"
+                action = _dead_action(r, True)
                 table_rows.append([
+                    action,
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
-                    context,
+                    reason,
                 ])
             click.echo(format_table(
-                ["Name", "Kind", "Location", "Context"],
+                ["Action", "Name", "Kind", "Location", "Reason"],
                 table_rows,
                 budget=50,
             ))
@@ -160,13 +233,15 @@ def dead(ctx, show_all):
             click.echo("(file has no importers — may be entry point or used by unparsed files)")
             table_rows = []
             for r in low:
+                action = _dead_action(r, False)
                 table_rows.append([
+                    action,
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
                 ])
             click.echo(format_table(
-                ["Name", "Kind", "Location"],
+                ["Action", "Name", "Kind", "Location"],
                 table_rows,
                 budget=50,
             ))

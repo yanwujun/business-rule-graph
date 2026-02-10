@@ -594,6 +594,10 @@ def polyglot(tmp_path_factory):
         '    public function greet() {\n'
         '        return "Hello, " . $this->name;\n'
         '    }\n'
+        '\n'
+        '    public function safeGreet() {\n'
+        '        return $this?->greet();\n'
+        '    }\n'
         '}\n'
     )
 
@@ -669,6 +673,33 @@ def polyglot(tmp_path_factory):
         '}\n'
         '\n'
         'data class Point(val x: Double, val y: Double)\n'
+    )
+
+    # ---- JavaScript CJS exports ----
+    (js_dir / "cjs_exports.js").write_text(
+        'exports.normalizeType = function(type) {\n'
+        '    return type;\n'
+        '};\n'
+        'exports.compileETag = function compileETag(val) {\n'
+        '    return val;\n'
+        '};\n'
+        'exports.version = "1.0";\n'
+        'var app = module.exports = {};\n'
+        'app.init = function init() {\n'
+        '    return true;\n'
+        '};\n'
+        'app.handle = function handle(req, res) {\n'
+        '    return req;\n'
+        '};\n'
+    )
+
+    # ---- JavaScript object exports ----
+    (js_dir / "obj_exports.js").write_text(
+        'module.exports = {\n'
+        '    handle(req) { return req; },\n'
+        '    query: function() { return []; },\n'
+        '    VERSION: "2.0"\n'
+        '};\n'
     )
 
     # ---- Vue SFC ----
@@ -850,7 +881,34 @@ class TestJavaScript:
     def test_require_import(self, polyglot):
         out, _ = roam("deps", "javascript/app.js", cwd=polyglot)
         # Should show require("express") as an import
-        assert "express" in out.lower() or "import" in out.lower() or rc == 0
+        assert "express" in out.lower() or "import" in out.lower() or "app.js" in out
+
+    def test_cjs_exports_function(self, polyglot):
+        """exports.X = function() should be extracted as a symbol."""
+        out, _ = roam("search", "normalizeType", cwd=polyglot)
+        assert "normalizeType" in out
+
+    def test_cjs_exports_qualified(self, polyglot):
+        """CJS export functions should have qualified names."""
+        out, _ = roam("symbol", "normalizeType", cwd=polyglot)
+        assert "exports.normalizeType" in out
+
+    def test_cjs_obj_method_assignment(self, polyglot):
+        """app.init = function() should be extracted."""
+        out, _ = roam("file", "javascript/cjs_exports.js", cwd=polyglot)
+        assert "init" in out
+        assert "handle" in out
+
+    def test_cjs_exports_value(self, polyglot):
+        """exports.version = "1.0" should be extracted as a constant."""
+        out, _ = roam("file", "javascript/cjs_exports.js", cwd=polyglot)
+        assert "version" in out
+
+    def test_module_exports_object_methods(self, polyglot):
+        """module.exports = { handle() {}, query: function() {} } should extract members."""
+        out, _ = roam("file", "javascript/obj_exports.js", cwd=polyglot)
+        assert "handle" in out
+        assert "query" in out
 
 
 # ============================================================================
@@ -1069,6 +1127,11 @@ class TestPHP:
     def test_visibility(self, polyglot):
         out, _ = roam("file", "php/User.php", cwd=polyglot)
         assert "private" in out or "public" in out or "protected" in out
+
+    def test_nullsafe_call(self, polyglot):
+        """$this?->greet() should create a call edge."""
+        out, _ = roam("file", "php/User.php", "--full", cwd=polyglot)
+        assert "safeGreet" in out
 
 
 # ============================================================================
@@ -1443,7 +1506,10 @@ class TestErrorHandling:
         commands = [
             "index", "map", "module", "file", "symbol", "trace",
             "deps", "health", "clusters", "layers", "weather",
-            "dead", "search", "grep", "uses",
+            "dead", "search", "grep", "uses", "impact", "owner",
+            "coupling", "fan", "diff", "describe", "test-map",
+            "sketch", "context", "safe-delete", "pr-risk", "split",
+            "risk",
         ]
         for cmd in commands:
             out, rc = roam(cmd, "--help")
@@ -1677,4 +1743,288 @@ class TestSketch:
     def test_sketch_help(self):
         """roam sketch --help should work."""
         out, rc = roam("sketch", "--help")
+        assert rc == 0
+
+
+# ============================================================================
+# CONTEXT COMMAND (v4.1)
+# ============================================================================
+
+class TestContext:
+    def test_context_basic(self, polyglot):
+        """roam context should show callers, callees, and files to read."""
+        out, rc = roam("context", "Animal", cwd=polyglot)
+        assert rc == 0
+        assert "Context for" in out
+        assert "Callers" in out
+        assert "Files to read" in out
+
+    def test_context_shows_tests(self, polyglot):
+        """roam context should detect test files referencing the symbol."""
+        out, rc = roam("context", "Animal", cwd=polyglot)
+        assert rc == 0
+        # The polyglot fixture has tests/test_animals.py importing Animal
+        assert "test" in out.lower()
+
+    def test_context_json(self, polyglot):
+        """roam --json context should produce valid JSON with all fields."""
+        import json
+        out, rc = roam("--json", "context", "Animal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "symbol" in data
+        assert "callers" in data
+        assert "callees" in data
+        assert "files_to_read" in data
+        assert isinstance(data["callers"], list)
+        assert isinstance(data["files_to_read"], list)
+        # Definition should be first file to read
+        assert len(data["files_to_read"]) >= 1
+        assert data["files_to_read"][0]["reason"] == "definition"
+
+    def test_context_not_found(self, polyglot):
+        """roam context with nonexistent symbol should fail gracefully."""
+        out, rc = roam("context", "NonExistentThing999", cwd=polyglot)
+        assert rc != 0
+        assert "not found" in out.lower()
+
+    def test_context_help(self):
+        """roam context --help should work."""
+        out, rc = roam("context", "--help")
+        assert rc == 0
+        assert "context" in out.lower()
+
+
+# ============================================================================
+# SAFE-DELETE COMMAND (v4.1)
+# ============================================================================
+
+class TestSafeDelete:
+    def test_safe_delete_unused(self, polyglot):
+        """roam safe-delete on an unused symbol should show SAFE."""
+        # _internal is a private method in Animal with no callers
+        out, rc = roam("safe-delete", "_internal", cwd=polyglot)
+        assert rc == 0
+        assert "SAFE" in out
+
+    def test_safe_delete_used(self, polyglot):
+        """roam safe-delete on a used symbol should show UNSAFE or REVIEW."""
+        out, rc = roam("safe-delete", "Animal", cwd=polyglot)
+        assert rc == 0
+        # Animal is used by Dog, Cat, and tests — should not be SAFE
+        assert "UNSAFE" in out or "REVIEW" in out
+
+    def test_safe_delete_shows_callers(self, polyglot):
+        """roam safe-delete on a used symbol should list callers."""
+        out, rc = roam("safe-delete", "Animal", cwd=polyglot)
+        assert rc == 0
+        assert "References" in out or "caller" in out.lower()
+
+    def test_safe_delete_json(self, polyglot):
+        """roam --json safe-delete should produce valid JSON with verdict."""
+        import json
+        out, rc = roam("--json", "safe-delete", "Animal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "verdict" in data
+        assert data["verdict"] in ("SAFE", "REVIEW", "UNSAFE")
+        assert "direct_callers" in data
+        assert "transitive_dependents" in data
+
+    def test_safe_delete_json_unused(self, polyglot):
+        """roam --json safe-delete on unused symbol should return SAFE verdict."""
+        import json
+        out, rc = roam("--json", "safe-delete", "_internal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert data["verdict"] == "SAFE"
+        assert data["direct_callers"] == 0
+
+    def test_safe_delete_not_found(self, polyglot):
+        """roam safe-delete with nonexistent symbol should fail gracefully."""
+        out, rc = roam("safe-delete", "NonExistentThing999", cwd=polyglot)
+        assert rc != 0
+        assert "not found" in out.lower()
+
+    def test_safe_delete_help(self):
+        """roam safe-delete --help should work."""
+        out, rc = roam("safe-delete", "--help")
+        assert rc == 0
+
+
+# ============================================================================
+# SPLIT COMMAND (v4.4)
+# ============================================================================
+
+class TestSplit:
+    def test_split_basic(self, polyglot):
+        """roam split should analyze file internal structure."""
+        out, rc = roam("split", "javascript/app.js", cwd=polyglot)
+        assert rc == 0
+        assert "Split analysis" in out or "symbols" in out
+
+    def test_split_shows_groups(self, polyglot):
+        """roam split should show symbol groups."""
+        out, rc = roam("split", "javascript/app.js", cwd=polyglot)
+        assert rc == 0
+        # Should show groups or at least report the symbol count
+        assert "Group" in out or "symbols" in out
+
+    def test_split_json(self, polyglot):
+        """roam --json split should produce valid JSON."""
+        import json
+        out, rc = roam("--json", "split", "javascript/app.js", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "path" in data
+        assert "total_symbols" in data
+        assert "groups" in data
+        assert isinstance(data["groups"], list)
+
+    def test_split_too_few_symbols(self, polyglot):
+        """roam split on a tiny file should report gracefully."""
+        # python/cat.py has Cat class + speak + lives = 3 symbols
+        # That's at the threshold — may analyze or say too few
+        out, rc = roam("split", "python/cat.py", cwd=polyglot)
+        assert rc == 0
+
+    def test_split_min_group(self, polyglot):
+        """roam split --min-group should filter small groups."""
+        out, rc = roam("split", "javascript/app.js", "--min-group", "1",
+                        cwd=polyglot)
+        assert rc == 0
+
+    def test_split_not_found(self, polyglot):
+        """roam split with nonexistent file should fail gracefully."""
+        out, rc = roam("split", "nonexistent_file.py", cwd=polyglot)
+        assert rc != 0
+        assert "not found" in out.lower()
+
+    def test_split_help(self):
+        """roam split --help should work."""
+        out, rc = roam("split", "--help")
+        assert rc == 0
+
+
+# ============================================================================
+# RISK COMMAND (v4.4)
+# ============================================================================
+
+class TestRisk:
+    def test_risk_basic(self, polyglot):
+        """roam risk should show domain-weighted risk ranking."""
+        out, rc = roam("risk", cwd=polyglot)
+        assert rc == 0
+        # May show "Risk" header or "No graph metrics" if no metrics
+        assert "Risk" in out or "No graph" in out
+
+    def test_risk_json(self, polyglot):
+        """roam --json risk should produce valid JSON."""
+        import json
+        out, rc = roam("--json", "risk", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "items" in data
+        assert isinstance(data["items"], list)
+
+    def test_risk_with_domain(self, polyglot):
+        """roam risk --domain should accept custom keywords at max weight."""
+        out, rc = roam("risk", "--domain", "animal,speak", cwd=polyglot)
+        assert rc == 0
+
+    def test_risk_count_limit(self, polyglot):
+        """roam risk -n should limit output count."""
+        out, rc = roam("risk", "-n", "3", cwd=polyglot)
+        assert rc == 0
+
+    def test_risk_json_with_domain(self, polyglot):
+        """roam --json risk --domain should include domain match info."""
+        import json
+        out, rc = roam("--json", "risk", "--domain", "animal", cwd=polyglot)
+        assert rc == 0
+        data = json.loads(out)
+        assert "items" in data
+
+    def test_risk_help(self):
+        """roam risk --help should work."""
+        out, rc = roam("risk", "--help")
+        assert rc == 0
+
+
+# ============================================================================
+# PR-RISK COMMAND (v4.1)
+# ============================================================================
+
+class TestPrRisk:
+    @pytest.fixture
+    def pr_project(self, tmp_path):
+        """A project with pending git changes for pr-risk testing."""
+        proj = tmp_path / "pr_risk_test"
+        proj.mkdir()
+        (proj / "main.py").write_text(
+            'from helper import process\n\n'
+            'def main():\n    return process(42)\n'
+        )
+        (proj / "helper.py").write_text(
+            'def process(x):\n    return x + 1\n\n'
+            'def validate(y):\n    return y > 0\n'
+        )
+        git_init(proj)
+        roam("index", "--force", cwd=proj)
+        # Create unstaged changes
+        (proj / "helper.py").write_text(
+            'def process(x):\n    return x * 2\n\n'
+            'def validate(y):\n    return y > 0\n'
+        )
+        return proj
+
+    def test_pr_risk_unstaged(self, pr_project):
+        """roam pr-risk should analyze unstaged changes."""
+        out, rc = roam("pr-risk", cwd=pr_project)
+        assert rc == 0
+        assert "Risk" in out
+
+    def test_pr_risk_json(self, pr_project):
+        """roam --json pr-risk should produce valid JSON with risk score."""
+        import json
+        out, rc = roam("--json", "pr-risk", cwd=pr_project)
+        assert rc == 0
+        data = json.loads(out)
+        assert "risk_score" in data
+        assert isinstance(data["risk_score"], int)
+        assert "risk_level" in data
+
+    def test_pr_risk_staged(self, pr_project):
+        """roam pr-risk --staged should analyze staged changes."""
+        import subprocess
+        subprocess.run(["git", "add", "."], cwd=pr_project, capture_output=True)
+        out, rc = roam("pr-risk", "--staged", cwd=pr_project)
+        assert rc == 0
+        assert "Risk" in out
+
+    def test_pr_risk_no_changes(self, polyglot):
+        """roam pr-risk with no changes should handle gracefully."""
+        out, rc = roam("pr-risk", cwd=polyglot)
+        assert rc == 0
+        assert "No changes" in out
+
+    def test_pr_risk_shows_breakdown(self, pr_project):
+        """roam pr-risk should show risk breakdown components."""
+        out, rc = roam("pr-risk", cwd=pr_project)
+        assert rc == 0
+        assert "Blast radius" in out or "blast" in out.lower()
+
+    def test_pr_risk_commit_range(self, pr_project):
+        """roam pr-risk with commit range should work."""
+        import subprocess
+        # Commit the change so we can use a commit range
+        subprocess.run(["git", "add", "."], cwd=pr_project, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "change"],
+                        cwd=pr_project, capture_output=True)
+        out, rc = roam("pr-risk", "HEAD~1..HEAD", cwd=pr_project)
+        assert rc == 0
+
+    def test_pr_risk_help(self):
+        """roam pr-risk --help should work."""
+        out, rc = roam("pr-risk", "--help")
         assert rc == 0

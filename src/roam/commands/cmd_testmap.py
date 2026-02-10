@@ -114,6 +114,7 @@ def _test_map_symbol(conn, sym):
     click.echo()
 
     # Test files importing the symbol's file
+    test_importers = []
     sym_file_id = conn.execute(
         "SELECT id FROM files WHERE path = ?", (sym["file_path"],)
     ).fetchone()
@@ -132,6 +133,15 @@ def _test_map_symbol(conn, sym):
                 click.echo(f"  {r['path']:<45s} {r['symbol_count']} symbols used")
         else:
             click.echo(f"Test files importing {sym['file_path']}: (none)")
+
+    # Suggest when no tests found
+    if not direct_tests and not test_importers:
+        pr_row = conn.execute(
+            "SELECT pagerank, in_degree FROM graph_metrics WHERE symbol_id = ?",
+            (sym["id"],),
+        ).fetchone()
+        if pr_row and (pr_row["pagerank"] or 0) > 0:
+            click.echo(f"\nNo tests found. This symbol has PR={pr_row['pagerank']:.4f}, in_degree={pr_row['in_degree']} — consider adding tests.")
 
 
 def _test_map_file(conn, path):
@@ -182,6 +192,7 @@ def _test_map_file(conn, path):
     sym_ids = conn.execute(
         "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
     ).fetchall()
+    test_caller_files = []
     if sym_ids:
         ph = ",".join("?" for _ in sym_ids)
         ids = [s["id"] for s in sym_ids]
@@ -198,6 +209,22 @@ def _test_map_file(conn, path):
             click.echo(f"Test files referencing symbols in {frow['path']} ({len(test_caller_files)}):")
             for tf in test_caller_files:
                 click.echo(f"  {tf}")
+
+    # Suggest high-risk untested symbols when no tests found
+    if not test_importers and not test_caller_files:
+        risky = conn.execute(
+            "SELECT s.name, s.kind, gm.pagerank, gm.in_degree "
+            "FROM symbols s "
+            "JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE s.file_id = ? AND s.kind IN ('function', 'class', 'method') "
+            "ORDER BY gm.pagerank DESC LIMIT 5",
+            (frow["id"],),
+        ).fetchall()
+        if risky:
+            click.echo(f"\nSuggested symbols to test (by importance):")
+            for r in risky:
+                pr = r["pagerank"] or 0
+                click.echo(f"  {abbrev_kind(r['kind'])}  {r['name']}  (PR={pr:.4f}, in={r['in_degree']})")
 
 
 @click.command("test-map")

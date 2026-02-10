@@ -29,9 +29,11 @@ SYMBOL_BY_ID = """
     WHERE s.id = ?
 """
 SEARCH_SYMBOLS = """
-    SELECT s.*, f.path as file_path
+    SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
     FROM symbols s JOIN files f ON s.file_id = f.id
-    WHERE s.name LIKE ? COLLATE NOCASE ORDER BY s.name LIMIT ?
+    LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+    WHERE s.name LIKE ? COLLATE NOCASE
+    ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
 """
 EXPORTED_SYMBOLS = """
     SELECT s.*, f.path as file_path

@@ -12,6 +12,35 @@ from roam.output.formatter import (
 )
 
 
+_FRAMEWORK_NAMES = frozenset({
+    # Python dunders
+    "__init__", "__str__", "__repr__", "__new__", "__del__", "__enter__",
+    "__exit__", "__getattr__", "__setattr__", "__getitem__", "__setitem__",
+    "__len__", "__iter__", "__next__", "__call__", "__hash__", "__eq__",
+    # JS/TS generic
+    "constructor", "render", "toString", "valueOf", "toJSON",
+    "setUp", "tearDown", "setup", "teardown",
+    "configure", "register", "bootstrap", "main",
+    # Vue
+    "computed", "ref", "reactive", "watch", "watchEffect",
+    "defineProps", "defineEmits", "defineExpose", "defineSlots",
+    "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
+    "onActivated", "onDeactivated", "onUpdated", "onBeforeUpdate",
+    "provide", "inject", "toRef", "toRefs", "unref", "isRef",
+    "shallowRef", "shallowReactive", "readonly", "shallowReadonly",
+    "nextTick", "h", "resolveComponent", "emit", "emits", "props",
+    # React
+    "useState", "useEffect", "useCallback", "useMemo", "useRef",
+    "useContext", "useReducer", "useLayoutEffect",
+    # Angular
+    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
+    # Go
+    "init", "New", "Close", "String", "Error",
+    # Rust
+    "new", "default", "fmt", "from", "into", "drop",
+})
+
+
 def _ensure_index():
     from roam.db.connection import db_exists
     if not db_exists():
@@ -20,8 +49,10 @@ def _ensure_index():
 
 
 @click.command()
+@click.option('--no-framework', is_flag=True,
+              help='Filter out framework/boilerplate symbols from god components and bottlenecks')
 @click.pass_context
-def health(ctx):
+def health(ctx, no_framework):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
@@ -54,6 +85,14 @@ def health(ctx):
                     "betweenness": round(bw, 1), "file": r["file_path"],
                 })
 
+        # --- Framework filtering ---
+        filtered_count = 0
+        if no_framework:
+            before = len(god_items) + len(bn_items)
+            god_items = [g for g in god_items if g["name"] not in _FRAMEWORK_NAMES]
+            bn_items = [b for b in bn_items if b["name"] not in _FRAMEWORK_NAMES]
+            filtered_count = before - len(god_items) - len(bn_items)
+
         # --- Layer violations ---
         layer_map = detect_layers(G)
         violations = find_violations(G, layer_map) if layer_map else []
@@ -68,17 +107,61 @@ def health(ctx):
             ).fetchall():
                 v_lookup[r["id"]] = r
 
+        # Classify issue severity
+        sev_counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
+
+        for cyc in formatted_cycles:
+            if len(cyc["files"]) > 1:
+                cyc["severity"] = "CRITICAL"
+            elif cyc["size"] > 3:
+                cyc["severity"] = "WARNING"
+            else:
+                cyc["severity"] = "INFO"
+            sev_counts[cyc["severity"]] += 1
+
+        for g in god_items:
+            if g["degree"] > 50:
+                g["severity"] = "CRITICAL"
+            elif g["degree"] > 30:
+                g["severity"] = "WARNING"
+            else:
+                g["severity"] = "INFO"
+            sev_counts[g["severity"]] += 1
+
+        for b in bn_items:
+            if b["betweenness"] > 5.0:
+                b["severity"] = "CRITICAL"
+            elif b["betweenness"] > 1.0:
+                b["severity"] = "WARNING"
+            else:
+                b["severity"] = "INFO"
+            sev_counts[b["severity"]] += 1
+
+        for v in violations:
+            v["severity"] = "WARNING"
+            sev_counts["WARNING"] += 1
+
         if json_mode:
+            j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
             click.echo(to_json({
+                "issue_count": j_issue_count,
+                "severity": sev_counts,
+                "framework_filtered": filtered_count,
                 "cycles": [
-                    {"size": c["size"], "symbols": [s["name"] for s in c["symbols"]],
+                    {"size": c["size"], "severity": c["severity"],
+                     "symbols": [s["name"] for s in c["symbols"]],
                      "files": c["files"]}
                     for c in formatted_cycles
                 ],
-                "god_components": god_items,
-                "bottlenecks": bn_items,
+                "god_components": [
+                    {**g, "severity": g["severity"]} for g in god_items
+                ],
+                "bottlenecks": [
+                    {**b, "severity": b["severity"]} for b in bn_items
+                ],
                 "layer_violations": [
                     {
+                        "severity": "WARNING",
                         "source": v_lookup.get(v["source"], {}).get("name", "?"),
                         "source_layer": v["source_layer"],
                         "target": v_lookup.get(v["target"], {}).get("name", "?"),
@@ -90,11 +173,40 @@ def health(ctx):
             return
 
         # --- Text output ---
+        issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
+        parts = []
+        if cycles:
+            parts.append(f"{len(cycles)} cycle{'s' if len(cycles) != 1 else ''}")
+        if god_items:
+            parts.append(f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}")
+        if bn_items:
+            parts.append(f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}")
+        if violations:
+            parts.append(f"{len(violations)} layer violation{'s' if len(violations) != 1 else ''}")
+        if issue_count == 0:
+            click.echo("Health: No issues detected")
+        else:
+            sev_parts = []
+            if sev_counts["CRITICAL"]:
+                sev_parts.append(f"{sev_counts['CRITICAL']} CRITICAL")
+            if sev_counts["WARNING"]:
+                sev_parts.append(f"{sev_counts['WARNING']} WARNING")
+            if sev_counts["INFO"]:
+                sev_parts.append(f"{sev_counts['INFO']} INFO")
+            click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} "
+                        f"— {', '.join(sev_parts)}")
+            detail = ', '.join(parts)
+            if filtered_count:
+                detail += f"; {filtered_count} framework symbols filtered"
+            click.echo(f"  ({detail})")
+        click.echo()
+
         click.echo("=== Cycles ===")
         if formatted_cycles:
             for i, cyc in enumerate(formatted_cycles, 1):
                 names = [s["name"] for s in cyc["symbols"]]
-                click.echo(f"  cycle {i} ({cyc['size']} symbols): {', '.join(names[:10])}")
+                sev = cyc["severity"]
+                click.echo(f"  [{sev}] cycle {i} ({cyc['size']} symbols): {', '.join(names[:10])}")
                 if len(names) > 10:
                     click.echo(f"    (+{len(names) - 10} more)")
                 click.echo(f"    files: {', '.join(cyc['files'][:5])}")
@@ -104,9 +216,11 @@ def health(ctx):
 
         click.echo("\n=== God Components (degree > 20) ===")
         if god_items:
-            god_rows = [[g["name"], abbrev_kind(g["kind"]), str(g["degree"]), loc(g["file"])]
+            god_rows = [[g["severity"], g["name"], abbrev_kind(g["kind"]),
+                         str(g["degree"]), loc(g["file"])]
                         for g in god_items]
-            click.echo(format_table(["Name", "Kind", "Degree", "File"], god_rows, budget=20))
+            click.echo(format_table(["Sev", "Name", "Kind", "Degree", "File"],
+                                    god_rows, budget=20))
         else:
             click.echo("  (none)")
 
@@ -115,8 +229,10 @@ def health(ctx):
             bn_rows = []
             for b in bn_items:
                 bw_str = f"{b['betweenness']:.0f}" if b["betweenness"] >= 10 else f"{b['betweenness']:.1f}"
-                bn_rows.append([b["name"], abbrev_kind(b["kind"]), bw_str, loc(b["file"])])
-            click.echo(format_table(["Name", "Kind", "Betweenness", "File"], bn_rows, budget=15))
+                bn_rows.append([b["severity"], b["name"], abbrev_kind(b["kind"]),
+                                bw_str, loc(b["file"])])
+            click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "File"],
+                                    bn_rows, budget=15))
         else:
             click.echo("  (none)")
 

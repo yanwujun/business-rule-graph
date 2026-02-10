@@ -62,6 +62,20 @@ def map_cmd(ctx, count, full):
         entries = [f["path"] for f in files
                    if os.path.basename(f["path"]) in entry_names]
 
+        # Filter barrel files: index files with few own definitions (re-export only)
+        barrel_paths = set()
+        for f in files:
+            bn = os.path.basename(f["path"])
+            if bn.startswith("index.") and f["path"] in entries:
+                own_defs = conn.execute(
+                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? "
+                    "AND kind IN ('function', 'class', 'method')",
+                    (f["id"],),
+                ).fetchone()[0]
+                if own_defs <= 2:
+                    barrel_paths.add(f["path"])
+        entries = [e for e in entries if e not in barrel_paths]
+
         main_files = conn.execute(
             "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
             "WHERE s.name = 'main' AND s.kind = 'function'",

@@ -37,6 +37,11 @@ _COMMANDS = {
     "describe": ("roam.commands.cmd_describe", "describe"),
     "test-map": ("roam.commands.cmd_testmap",  "test_map"),
     "sketch":   ("roam.commands.cmd_sketch",   "sketch"),
+    "context":     ("roam.commands.cmd_context",     "context"),
+    "safe-delete": ("roam.commands.cmd_safe_delete", "safe_delete"),
+    "pr-risk":     ("roam.commands.cmd_pr_risk",     "pr_risk"),
+    "split":       ("roam.commands.cmd_split",      "split"),
+    "risk":        ("roam.commands.cmd_risk",       "risk"),
 }
 
 

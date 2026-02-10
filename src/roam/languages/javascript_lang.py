@@ -270,18 +270,147 @@ class JavaScriptExtractor(LanguageExtractor):
                     ))
 
     def _extract_module_exports(self, node, source, symbols, parent_name):
-        """Detect module.exports = ... pattern."""
+        """Detect module.exports/exports assignments and obj.method assignments."""
         for child in node.children:
-            if child.type == "assignment_expression":
-                left = child.child_by_field_name("left")
-                if left and self.node_text(left, source) in ("module.exports", "exports"):
-                    right = child.child_by_field_name("right")
-                    if right and right.type == "identifier":
-                        name = self.node_text(right, source)
-                        # Mark existing symbol as exported if found
-                        for sym in symbols:
-                            if sym["name"] == name:
-                                sym["is_exported"] = True
+            if child.type != "assignment_expression":
+                continue
+            left = child.child_by_field_name("left")
+            right = child.child_by_field_name("right")
+            if left is None or right is None:
+                continue
+
+            left_text = self.node_text(left, source)
+
+            # --- Pattern: module.exports = X or exports = X ---
+            if left_text in ("module.exports", "exports"):
+                if right.type == "identifier":
+                    name = self.node_text(right, source)
+                    # Mark existing symbol as exported (don't duplicate)
+                    for sym in symbols:
+                        if sym["name"] == name:
+                            sym["is_exported"] = True
+                elif right.type == "object":
+                    # module.exports = { handle(req) {}, query: function() {} }
+                    self._extract_object_export_members(right, source, symbols)
+                continue
+
+            # --- Pattern: member assignment like exports.X = ..., app.X = ... ---
+            if left.type == "member_expression":
+                obj_node = left.child_by_field_name("object")
+                prop_node = left.child_by_field_name("property")
+                if obj_node is None or prop_node is None:
+                    continue
+                obj_text = self.node_text(obj_node, source)
+                prop_name = self.node_text(prop_node, source)
+
+                # Check for View.prototype.method pattern
+                if obj_node.type == "member_expression":
+                    inner_obj = obj_node.child_by_field_name("object")
+                    inner_prop = obj_node.child_by_field_name("property")
+                    if inner_prop and self.node_text(inner_prop, source) == "prototype" and inner_obj:
+                        obj_text = self.node_text(inner_obj, source)
+                        # View.prototype.lookup = function(...) -> parent=View, name=lookup
+
+                is_exports = obj_text in ("exports", "module.exports")
+
+                # Guard: if right is an identifier matching an existing symbol, just mark exported
+                if right.type == "identifier" and is_exports:
+                    rname = self.node_text(right, source)
+                    for sym in symbols:
+                        if sym["name"] == rname:
+                            sym["is_exported"] = True
+                    continue
+
+                # Extract function or value
+                if right.type in ("function_expression", "arrow_function", "generator_function"):
+                    params = right.child_by_field_name("parameters")
+                    p_text = self._params_text(params, source)
+                    sig = f"{obj_text}.{prop_name} = function({p_text})"
+                    qualified = f"{obj_text}.{prop_name}"
+                    symbols.append(self._make_symbol(
+                        name=prop_name,
+                        kind="function",
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=sig,
+                        docstring=self.get_docstring(node, source),
+                        is_exported=is_exports,
+                        parent_name=obj_text,
+                    ))
+                else:
+                    # Non-function value: exports.version = "1.0"
+                    val_text = self.node_text(right, source)[:80]
+                    qualified = f"{obj_text}.{prop_name}"
+                    sig = f"{obj_text}.{prop_name} = {val_text}"
+                    symbols.append(self._make_symbol(
+                        name=prop_name,
+                        kind="constant",
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=sig,
+                        is_exported=is_exports,
+                        parent_name=obj_text,
+                    ))
+
+    def _extract_object_export_members(self, obj_node, source, symbols):
+        """Extract members from module.exports = { ... } object literal."""
+        for child in obj_node.children:
+            if child.type == "method_definition":
+                name_node = child.child_by_field_name("name")
+                if name_node is None:
+                    continue
+                name = self.node_text(name_node, source)
+                params = child.child_by_field_name("parameters")
+                sig = f"exports.{name}({self._params_text(params, source)})"
+                symbols.append(self._make_symbol(
+                    name=name,
+                    kind="function",
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    qualified_name=f"exports.{name}",
+                    signature=sig,
+                    is_exported=True,
+                    parent_name="exports",
+                ))
+            elif child.type == "pair":
+                key_node = child.child_by_field_name("key")
+                value_node = child.child_by_field_name("value")
+                if key_node is None or value_node is None:
+                    continue
+                name = self.node_text(key_node, source)
+                if value_node.type in ("function_expression", "arrow_function", "generator_function"):
+                    params = value_node.child_by_field_name("parameters")
+                    sig = f"exports.{name} = function({self._params_text(params, source)})"
+                    symbols.append(self._make_symbol(
+                        name=name,
+                        kind="function",
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        qualified_name=f"exports.{name}",
+                        signature=sig,
+                        is_exported=True,
+                        parent_name="exports",
+                    ))
+                else:
+                    val_text = self.node_text(value_node, source)[:80]
+                    symbols.append(self._make_symbol(
+                        name=name,
+                        kind="constant",
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        qualified_name=f"exports.{name}",
+                        signature=f"exports.{name} = {val_text}",
+                        is_exported=True,
+                        parent_name="exports",
+                    ))
+            elif child.type == "shorthand_property_identifier":
+                # { existingVar } — mark matching symbol as exported
+                name = self.node_text(child, source)
+                for sym in symbols:
+                    if sym["name"] == name:
+                        sym["is_exported"] = True
 
     def _extract_destructured(self, pattern_node, decl_node, source, symbols,
                               parent_name, is_exported, decl_kind, value_node):

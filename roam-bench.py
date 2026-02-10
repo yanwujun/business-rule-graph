@@ -30,6 +30,7 @@ REPOS = {
     "ripgrep":      {"url": "https://github.com/BurntSushi/ripgrep.git",     "lang": "rs"},
     "tokio":        {"url": "https://github.com/tokio-rs/tokio.git",         "lang": "rs"},
     "spring-boot":  {"url": "https://github.com/spring-projects/spring-boot.git", "lang": "java"},
+    "laravel":      {"url": "https://github.com/laravel/framework.git",          "lang": "php"},
 }
 
 SLOW_REPOS = {"django", "spring-boot", "nextjs"}
@@ -38,7 +39,7 @@ ALL_COMMANDS = [
     "index", "map", "file", "symbol", "trace", "deps", "module", "health",
     "clusters", "layers", "weather", "dead", "search", "grep", "uses",
     "impact", "owner", "coupling", "fan", "diff", "describe", "test-map",
-    "sketch",
+    "sketch", "context", "safe-delete", "pr-risk", "split", "risk",
 ]
 
 BENCH_DIR = Path(__file__).resolve().parent / "bench-repos"
@@ -504,11 +505,11 @@ def sample_args(conn):
 
 
 def validate_commands(name):
-    """Run all 23 commands, return results dict with per-command timing."""
+    """Run all 28 commands, return results dict with per-command timing."""
     repo_dir = BENCH_DIR / name
     conn = open_db(repo_dir)
     if conn is None:
-        return {"total": 23, "passed": 0, "failed": 23, "failures": ["NO DB"],
+        return {"total": 28, "passed": 0, "failed": 28, "failures": ["NO DB"],
                 "timings": {}, "sampled_args": {}}
 
     file_path, sym_name, sym_name2, dir_path = sample_args(conn)
@@ -545,6 +546,12 @@ def validate_commands(name):
         "module":   ["module", dir_path] if dir_path else None,
         "sketch":   ["sketch", dir_path] if dir_path else None,
         "grep":     ["grep", sym_name] if sym_name else None,
+        # Compound / new commands
+        "context":     ["context", sym_name] if sym_name else None,
+        "safe-delete": ["safe-delete", sym_name] if sym_name else None,
+        "pr-risk":     ["pr-risk"],
+        "split":       ["split", file_path] if file_path else None,
+        "risk":        ["risk"],
     }
 
     passed = 0
@@ -603,7 +610,7 @@ def validate_commands(name):
             print(f"    FAIL  {elapsed:>6.1f}s  {full_cmd}")
             print(f"                     -> {err_line}")
 
-    total = 23
+    total = len(ALL_COMMANDS)
     total_time = sum(timings.values())
     print(f"    ---- {passed}/{total} passed in {fmt_duration(total_time)}")
 
@@ -903,7 +910,7 @@ def save_json(results, output_path, repo_names, wall_time):
     avg_score = round(sum(scores) / len(scores), 2) if scores else 0
 
     doc = {
-        "version": "3.6",
+        "version": "3.8",
         "date": datetime.now().isoformat(timespec="seconds"),
         "roam_commit": roam_commit(),
         "wall_time_s": round(wall_time, 1),
@@ -957,7 +964,7 @@ def main():
         names = [n for n in names if n not in SLOW_REPOS]
 
     print(f"{'=' * 65}")
-    print(f"  ROAM BENCHMARK - v3.7")
+    print(f"  ROAM BENCHMARK - v3.8")
     print(f"  {len(names)} repos: {', '.join(names)}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 65}")
@@ -1009,8 +1016,9 @@ def main():
             cmd_results = validate_commands(name)
             data["commands"] = cmd_results
         else:
-            data["commands"] = {"total": 23, "passed": 23, "failed": 0,
-                                "failures": [], "timings": {}, "sampled_args": {}}
+            data["commands"] = {"total": len(ALL_COMMANDS), "passed": len(ALL_COMMANDS),
+                                "failed": 0, "failures": [], "timings": {},
+                                "sampled_args": {}}
 
         # Composite score
         sub_scores, _, composite = compute_sub_scores(data["quality"], data["commands"])

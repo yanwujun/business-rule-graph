@@ -13,11 +13,41 @@ def _ensure_index():
         Indexer().run()
 
 
+_FRAMEWORK_NAMES = frozenset({
+    # Python dunders
+    "__init__", "__str__", "__repr__", "__new__", "__del__", "__enter__",
+    "__exit__", "__getattr__", "__setattr__", "__getitem__", "__setitem__",
+    "__len__", "__iter__", "__next__", "__call__", "__hash__", "__eq__",
+    # JS/TS generic
+    "constructor", "render", "toString", "valueOf", "toJSON",
+    "setUp", "tearDown", "setup", "teardown",
+    "configure", "register", "bootstrap", "main",
+    # Vue
+    "computed", "ref", "reactive", "watch", "watchEffect",
+    "defineProps", "defineEmits", "defineExpose", "defineSlots",
+    "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
+    "onActivated", "onDeactivated", "onUpdated", "onBeforeUpdate",
+    "provide", "inject", "toRef", "toRefs", "unref", "isRef",
+    "shallowRef", "shallowReactive", "readonly", "shallowReadonly",
+    "nextTick", "h", "resolveComponent", "emit", "emits", "props",
+    # React
+    "useState", "useEffect", "useCallback", "useMemo", "useRef",
+    "useContext", "useReducer", "useLayoutEffect",
+    # Angular
+    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
+    # Go
+    "init", "New", "Close", "String", "Error",
+    # Rust
+    "new", "default", "fmt", "from", "into", "drop",
+})
+
+
 @click.command()
 @click.argument('mode', default='symbol', type=click.Choice(['symbol', 'file']))
 @click.option('-n', 'count', default=20, help='Number of items to show')
+@click.option('--no-framework', is_flag=True, help='Filter out framework/boilerplate symbols')
 @click.pass_context
-def fan(ctx, mode, count):
+def fan(ctx, mode, count, no_framework):
     """Show fan-in/fan-out: most connected symbols or files."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
@@ -36,6 +66,9 @@ def fan(ctx, mode, count):
                 ORDER BY total DESC
                 LIMIT ?
             """, (count,)).fetchall()
+
+            if no_framework:
+                rows = [r for r in rows if r["name"] not in _FRAMEWORK_NAMES]
 
             if not rows:
                 if json_mode:

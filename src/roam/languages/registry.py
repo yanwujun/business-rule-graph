@@ -47,7 +47,7 @@ _EXTENSION_MAP: dict[str, str] = {
 # Languages with dedicated extractors
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
-    "go", "rust", "java", "c", "cpp",
+    "go", "rust", "java", "c", "cpp", "php",
 })
 
 # All supported tree-sitter language names
@@ -116,6 +116,9 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "cpp":
         from .c_lang import CppExtractor
         return CppExtractor()
+    elif language == "php":
+        from .php_lang import PhpExtractor
+        return PhpExtractor()
     else:
         # Use generic extractor for tier-2 languages
         from .generic_lang import GenericExtractor

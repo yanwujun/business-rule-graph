@@ -171,6 +171,14 @@ def module(ctx, path):
             click.echo("Imported by (external): (none)")
 
         click.echo()
-        click.echo(f"Cohesion: {cohesion:.0f}% ({internal_edges}/{total_edges} edges are internal)")
+        if cohesion >= 80:
+            rating = "Excellent — well-encapsulated"
+        elif cohesion >= 60:
+            rating = "Good — mostly self-contained"
+        elif cohesion >= 30:
+            rating = "Moderate — significant external coupling"
+        else:
+            rating = "Low — heavily coupled with external code"
+        click.echo(f"Cohesion: {cohesion:.0f}% ({internal_edges}/{total_edges} edges are internal) — {rating}")
         click.echo(f"API surface: {api_surface:.0f}% exported ({exported_count}/{total_syms} symbols)")
         click.echo(f"Reused by: {ext_importers} external files")

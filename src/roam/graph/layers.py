@@ -96,17 +96,18 @@ def format_layers(
         return []
 
     all_ids = list(layers.keys())
-    placeholders = ",".join("?" for _ in all_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path AS file_path "
-        f"FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({placeholders})",
-        all_ids,
-    ).fetchall()
-
     lookup: dict[int, dict] = {}
-    for sid, name, kind, fpath in rows:
-        lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
+    for i in range(0, len(all_ids), 500):
+        batch = all_ids[i:i+500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"SELECT s.id, s.name, s.kind, f.path AS file_path "
+            f"FROM symbols s JOIN files f ON s.file_id = f.id "
+            f"WHERE s.id IN ({placeholders})",
+            batch,
+        ).fetchall()
+        for sid, name, kind, fpath in rows:
+            lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
 
     # Group by layer
     layer_groups: dict[int, list[dict]] = {}

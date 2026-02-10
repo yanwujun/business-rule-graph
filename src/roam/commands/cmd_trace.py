@@ -36,9 +36,31 @@ def trace(ctx, source, target):
 
         G = build_symbol_graph(conn)
 
+        # Pre-check: direct file-level imports beat graph pathfinding.
+        # If source's file imports target's file, that's a 1-hop import.
+        _file_ids = {}
+        for _sid in src_ids + tgt_ids:
+            row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (_sid,)).fetchone()
+            if row:
+                _file_ids[_sid] = row["file_id"]
+
         best = None
         for sid in src_ids:
             for tid in tgt_ids:
+                if sid == tid:
+                    continue
+                # Direct file import shortcut
+                src_fid = _file_ids.get(sid)
+                tgt_fid = _file_ids.get(tid)
+                if src_fid and tgt_fid and src_fid != tgt_fid:
+                    fe = conn.execute(
+                        "SELECT 1 FROM file_edges WHERE source_file_id = ? AND target_file_id = ?",
+                        (src_fid, tgt_fid),
+                    ).fetchone()
+                    if fe and (best is None or len(best) > 2):
+                        best = [sid, tid]
+                        continue
+
                 p = find_path(G, sid, tid)
                 if p and (best is None or len(p) < len(best)):
                     best = p

@@ -82,17 +82,30 @@ def label_clusters(
         }
 
     labels: dict[int, str] = {}
+    total_nodes = len(clusters)
+
     for cid, members in groups.items():
-        # Determine majority directory
+        # Determine directory distribution
         dirs = [
             os.path.dirname(id_to_path[m]).replace("\\", "/")
             for m in members if m in id_to_path
         ]
-        if dirs:
-            most_common_dir = Counter(dirs).most_common(1)[0][0]
-            short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
-        else:
-            short_dir = ""
+        dir_counts = Counter(dirs) if dirs else Counter()
+        most_common_dir = dir_counts.most_common(1)[0][0] if dir_counts else ""
+        short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
+
+        # Large clusters (>100 symbols or >40% of graph): use directory breakdown
+        is_mega = len(members) > 100 or (total_nodes > 0 and len(members) > total_nodes * 0.4)
+        if is_mega and len(dir_counts) > 1:
+            top_dirs = dir_counts.most_common(3)
+            total = sum(c for _, c in top_dirs)
+            parts = []
+            for d, c in top_dirs:
+                d_short = d.rstrip("/").rsplit("/", 1)[-1] if d else "."
+                pct = c * 100 / len(members) if members else 0
+                parts.append(f"{d_short} {pct:.0f}%")
+            labels[cid] = " + ".join(parts)
+            continue
 
         # Pick best representative symbol:
         # 1st pass: anchor kinds (class/struct/interface) by PageRank
@@ -106,7 +119,6 @@ def label_clusters(
                 best_name = info["name"]
 
         if best_name is None:
-            # No anchor kind found — use highest PageRank of any kind
             best_pr = -1
             for m in members:
                 info = id_to_info.get(m)
@@ -114,10 +126,19 @@ def label_clusters(
                     best_pr = info["pagerank"]
                     best_name = info["name"]
 
-        # Build label: prefer "dir/Symbol", fall back to just directory
-        if best_name and best_pr > 0 and short_dir:
+        # Fallback: use most common anchor name
+        if best_name is None:
+            stems = [id_to_info[m]["name"] for m in members
+                     if m in id_to_info and id_to_info[m]["kind"] in _ANCHOR_KINDS]
+            if not stems:
+                stems = [id_to_info[m]["name"] for m in members if m in id_to_info]
+            if stems:
+                best_name = Counter(stems).most_common(1)[0][0]
+
+        # Build label
+        if best_name and short_dir:
             labels[cid] = f"{short_dir}/{best_name}"
-        elif best_name and best_pr > 0:
+        elif best_name:
             labels[cid] = best_name
         elif short_dir:
             labels[cid] = short_dir
