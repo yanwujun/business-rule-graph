@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI**
 
-28 commands · one pre-built index · instant answers
+29 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -28,6 +28,7 @@ $ roam context Flask             # AI-ready: files-to-read with exact line range
 $ roam deps src/flask/app.py     # imports + imported-by with symbol breakdown
 $ roam impact create_app         # 34 symbols break if this changes
 $ roam split src/flask/app.py    # internal groups with isolation % + extraction suggestions
+$ roam why Flask                 # role, reach, criticality, one-line verdict
 $ roam risk                      # domain-weighted risk ranking of all symbols
 $ roam health                    # cycles, god components, bottlenecks + summary
 $ roam pr-risk HEAD~3..HEAD      # 0-100 risk score + dead exports + reviewers
@@ -142,6 +143,7 @@ roam health
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
 | `roam split <file>` | Analyze a file's internal structure: symbol groups, isolation %, cross-group coupling, extraction suggestions |
 | `roam risk` | Domain-weighted risk ranking: static risk × domain keyword weight. Symbols in UI files (components/, .vue, .tsx) get dampened for non-UI keywords. Configurable via `.roam/domain-weights.json` |
+| `roam why <name> [name2 ...]` | Explain why a symbol matters: role classification (Core utility/Hub/Bridge/Leaf/Internal), transitive reach, critical path, cluster, one-line verdict. Batch mode for triage |
 | `roam safe-delete <symbol>` | Check if a symbol can be safely deleted — SAFE/REVIEW/UNSAFE verdict with reasoning |
 | `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range (e.g., `HEAD~3..HEAD`) |
 | `roam pr-risk [REV_RANGE]` | PR risk score (0-100) + new dead exports + suggested reviewers |
@@ -177,13 +179,14 @@ roam health
 
 | Option | Description |
 |--------|-------------|
-| `roam --json <command>` | Output structured JSON instead of human-readable tables. Works on all 28 commands. |
+| `roam --json <command>` | Output structured JSON instead of human-readable tables. Works on all 29 commands. |
 | `roam --version` | Show version |
 
 ```bash
 # Examples
 roam --json health          # {"cycles": [...], "god_components": [...], ...}
 roam --json symbol Flask    # {"name": "Flask", "callers": [...], "callees": [...]}
+roam --json why Flask         # {"symbols": [{"name": "Flask", "role": "Hub", "reach": 89, ...}]}
 roam --json diff HEAD~3..HEAD  # {"changed_files": 11, "affected_symbols": 405, ...}
 ```
 
@@ -312,7 +315,20 @@ $ roam split src/flask/app.py
 
 `roam split` analyzes the internal symbol graph of a file and identifies groups with high isolation — natural seams for extraction into separate modules or composables.
 
-**Step 8: Generate a CLAUDE.md for your team**
+**Step 8: Understand why a symbol matters**
+
+```
+$ roam why Flask url_for Blueprint
+Symbol     Role          Fan         Reach     Risk      Verdict
+---------  ------------  ----------  --------  --------  --------------------------------------------------
+Flask      Hub           fan-in:47   reach:89  CRITICAL  God symbol (47 in, 12 out). Consider splitting.
+url_for    Core utility  fan-in:31   reach:45  HIGH      Widely used utility (31 callers). Stable interface.
+Blueprint  Bridge        fan-in:18   reach:34  moderate  Coupling point between clusters.
+```
+
+`roam why` gives a quick assessment of a symbol's architectural role — is it a core utility, a hub, a bridge, or a leaf? Batch mode lets you triage multiple symbols in one call, ideal for deciding modification order or reviewing dead code lists.
+
+**Step 9: Generate a CLAUDE.md for your team**
 
 ```
 $ roam describe --write
@@ -321,7 +337,7 @@ Wrote CLAUDE.md (98 lines)
 
 `roam describe` reads the index and writes a project overview that any AI tool can consume — entry points, directory structure, key conventions, test commands. Think of it as a machine-readable onboarding doc generated in one command.
 
-Eight commands, and you have a complete picture of the project: structure, key symbols, dependencies, hotspots, architecture problems, AI-ready context, file decomposition guidance, and a shareable project description. An AI agent doing this manually would need 20+ tool calls.
+Nine commands, and you have a complete picture of the project: structure, key symbols, dependencies, hotspots, architecture problems, AI-ready context, file decomposition guidance, and a shareable project description. An AI agent doing this manually would need 20+ tool calls.
 
 ## Integration with AI Coding Tools
 
@@ -348,6 +364,7 @@ Run `roam index` once, then use these commands instead of Glob/Grep/Read explora
 - `roam impact <symbol>` -- blast radius (what breaks if changed)
 - `roam split <file>` -- internal symbol groups with isolation % and extraction suggestions
 - `roam risk` -- domain-weighted risk ranking (UI files auto-dampened, configurable weights)
+- `roam why <name>` -- role, reach, criticality, verdict (batch: `roam why A B C`)
 - `roam safe-delete <symbol>` -- check if safe to delete (SAFE/REVIEW/UNSAFE verdict)
 - `roam diff` -- blast radius of uncommitted changes
 - `roam diff HEAD~3..HEAD` -- blast radius of a commit range
@@ -363,7 +380,7 @@ Run `roam index` once, then use these commands instead of Glob/Grep/Read explora
 - `roam test-map <name>` -- map symbols/files to test coverage
 - `roam sketch <dir>` -- structural skeleton of a directory
 
-Use `roam --json <command>` for structured JSON output (all 28 commands).
+Use `roam --json <command>` for structured JSON output (all 29 commands).
 ```
 
 <details>
@@ -397,6 +414,7 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | "What breaks if I change X?" | `roam impact <symbol>` | No direct equivalent |
 | "How should I split this large file?" | `roam split <file>` | Manual reading + guessing (error-prone, slow) |
 | "What's the riskiest code?" | `roam risk` | Manual review (no domain weighting) |
+| "Why does this symbol exist?" | `roam why <name>` | `roam context` + `roam impact` + `roam fan` (3 commands) |
 | "Can I safely delete this?" | `roam safe-delete <symbol>` | `roam dead` + manual grep (slow, error-prone) |
 | "Review blast radius of a PR" | `roam pr-risk HEAD~3..HEAD` | Manual `git diff` + tracing (slow, incomplete) |
 | "Who should review this file?" | `roam owner <path>` | `git log --follow` (raw data, no aggregation) |
@@ -462,15 +480,15 @@ All query commands complete in **<0.5s** (~0.25s Python startup + instant SQLite
 
 ### Quality Benchmark
 
-Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real-world open-source repos, measures extraction quality, and runs all 28 commands against each repo:
+Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real-world open-source repos, measures extraction quality, and runs all 29 commands against each repo:
 
 | Repo | Language | Score | Coverage | Ambiguity | Edge Density | Qualified Names | Commands |
 |------|----------|-------|----------|-----------|--------------|-----------------|----------|
-| Laravel | PHP | **9.55** | 91.2% | 0.6% | 0.97 | 91.0% | 28/28 |
-| Vue | TS | **9.27** | 85.8% | 17.2% | 1.68 | 49.5% | 28/28 |
-| Svelte | TS | **9.04** | 94.7% | 57.6% | 1.19 | 25.2% | 28/28 |
-| Axios | JS | **8.98** | 85.9% | 38.4% | 0.82 | 40.6% | 28/28 |
-| Express | JS | **8.46** | 96.0% | 37.1% | 1.29 | 15.1% | 28/28 |
+| Laravel | PHP | **9.55** | 91.2% | 0.6% | 0.97 | 91.0% | 29/29 |
+| Vue | TS | **9.27** | 85.8% | 17.2% | 1.68 | 49.5% | 29/29 |
+| Svelte | TS | **9.04** | 94.7% | 57.6% | 1.19 | 25.2% | 29/29 |
+| Axios | JS | **8.98** | 85.9% | 38.4% | 0.82 | 40.6% | 29/29 |
+| Express | JS | **8.46** | 96.0% | 37.1% | 1.29 | 15.1% | 29/29 |
 
 **Per-language average:**
 
@@ -617,7 +635,7 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (~250 tests across 16 languages, 3 OS, Python 3.10-3.13)
+# Run tests (~260 tests across 16 languages, 3 OS, Python 3.10-3.13)
 pytest tests/
 
 # Index roam itself
@@ -643,7 +661,7 @@ roam map
 roam-code/
 ├── pyproject.toml
 ├── src/roam/
-│   ├── cli.py                      # Click CLI entry point (28 commands)
+│   ├── cli.py                      # Click CLI entry point (29 commands)
 │   ├── db/
 │   │   ├── connection.py           # SQLite connection (WAL, pragmas)
 │   │   ├── schema.py               # 10 tables, 20+ indexes
@@ -676,6 +694,7 @@ roam-code/
 │   │   ├── layers.py               # Topological layer detection
 │   │   ├── pathfinding.py          # Shortest path for trace
 │   │   └── split.py                # Intra-file decomposition analysis
+│   │   └── why.py                  # Symbol role classification + verdict
 │   ├── commands/                    # One module per CLI command
 │   └── output/
 │       └── formatter.py            # Token-efficient text formatting
