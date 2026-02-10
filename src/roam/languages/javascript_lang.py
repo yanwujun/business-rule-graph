@@ -345,6 +345,8 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._walk_refs(child, source, refs, scope_name)
             elif child.type == "call_expression":
                 self._extract_call(child, source, refs, scope_name)
+            elif child.type == "new_expression":
+                self._extract_new(child, source, refs, scope_name)
             else:
                 new_scope = scope_name
                 if child.type in ("function_declaration", "class_declaration", "generator_function_declaration"):
@@ -453,6 +455,34 @@ class JavaScriptExtractor(LanguageExtractor):
         ))
 
         # Recurse into arguments for nested calls
+        args = node.child_by_field_name("arguments")
+        if args:
+            self._walk_refs(args, source, refs, scope_name)
+
+    def _extract_new(self, node, source, refs, scope_name):
+        """Extract new expressions: new Foo(), new module.Foo()."""
+        ctor = node.child_by_field_name("constructor")
+        if ctor is None:
+            return
+
+        # Handle new module.Foo() -> extract "Foo"
+        if ctor.type == "member_expression":
+            prop = ctor.child_by_field_name("property")
+            if prop:
+                name = self.node_text(prop, source)
+            else:
+                name = self.node_text(ctor, source)
+        else:
+            name = self.node_text(ctor, source)
+
+        refs.append(self._make_reference(
+            target_name=name,
+            kind="call",
+            line=ctor.start_point[0] + 1,
+            source_name=scope_name,
+        ))
+
+        # Recurse into arguments for nested calls/refs
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)

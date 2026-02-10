@@ -23,7 +23,7 @@ REPOS = {
     "cli":          {"url": "https://github.com/cli/cli.git",                "lang": "go"},
     "gin":          {"url": "https://github.com/gin-gonic/gin.git",          "lang": "go"},
     "express":      {"url": "https://github.com/expressjs/express.git",      "lang": "js"},
-    "lodash":       {"url": "https://github.com/lodash/lodash.git",          "lang": "js"},
+    "axios":        {"url": "https://github.com/axios/axios.git",            "lang": "js"},
     "svelte":       {"url": "https://github.com/sveltejs/svelte.git",        "lang": "ts"},
     "vue":          {"url": "https://github.com/vuejs/core.git",             "lang": "ts"},
     "nextjs":       {"url": "https://github.com/vercel/next.js.git",         "lang": "ts"},
@@ -191,13 +191,18 @@ def symbol_coverage(conn):
     Excludes docs/config/data files, build artifacts, and empty files."""
     lang_filter = ",".join(f"'{l}'" for l in CODE_LANGUAGES)
     # Exclude build artifacts, vendored code, minified files, and empty __init__.py
-    exclusion = """
-        AND path NOT LIKE '%/dist/%' AND path NOT LIKE '%\\dist\\%'
-        AND path NOT LIKE '%/vendor/%' AND path NOT LIKE '%\\vendor\\%'
-        AND path NOT LIKE '%/build/%' AND path NOT LIKE '%\\build\\%'
-        AND path NOT LIKE '%/node_modules/%' AND path NOT LIKE '%\\node_modules\\%'
-        AND path NOT LIKE '%.min.js' AND path NOT LIKE '%.min.css'
-    """
+    # Exclude build artifacts, vendored code, minified files, test/fixture dirs
+    # Each pattern needs both slash variants (fwd/back) AND root-level start
+    skip_dirs = [
+        "dist", "vendor", "build", "node_modules",
+        "__tests__", "tests", "test", "__test__",
+        "spec", "__benchmarks__", "fixtures", "__fixtures__",
+    ]
+    parts = ["AND path NOT LIKE '%.min.js' AND path NOT LIKE '%.min.css'"]
+    for d in skip_dirs:
+        parts.append(f"AND path NOT LIKE '%/{d}/%' AND path NOT LIKE '%\\{d}\\%'")
+        parts.append(f"AND path NOT LIKE '{d}/%' AND path NOT LIKE '{d}\\%'")
+    exclusion = "\n        ".join(parts)
     code_files = conn.execute(
         f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter}) {exclusion}"
     ).fetchone()[0]
@@ -934,7 +939,7 @@ def main():
         names = [n for n in names if n not in SLOW_REPOS]
 
     print(f"{'=' * 65}")
-    print(f"  ROAM BENCHMARK - v3.6")
+    print(f"  ROAM BENCHMARK - v3.7")
     print(f"  {len(names)} repos: {', '.join(names)}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 65}")
