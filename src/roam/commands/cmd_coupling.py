@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db, db_exists
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -15,8 +15,10 @@ def _ensure_index():
 
 @click.command()
 @click.option('-n', 'count', default=20, help='Number of pairs to show')
-def coupling(count):
+@click.pass_context
+def coupling(ctx, count):
     """Show temporal coupling: file pairs that change together."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -31,7 +33,10 @@ def coupling(count):
         """, (count,)).fetchall()
 
         if not rows:
-            click.echo("No co-change data available. Run `roam index` on a git repository.")
+            if json_mode:
+                click.echo(to_json({"pairs": []}))
+            else:
+                click.echo("No co-change data available. Run `roam index` on a git repository.")
             return
 
         # Check which pairs have structural connections (file_edges)
@@ -75,6 +80,26 @@ def coupling(count):
                     strength = f"{ratio:.0%}"
 
             table_rows.append([str(cochange), strength, has_edge, path_a, path_b])
+
+        if json_mode:
+            pairs = []
+            for r in rows:
+                pa, pb = r["path_a"], r["path_b"]
+                fid_a, fid_b = path_to_id.get(pa), path_to_id.get(pb)
+                has_struct = bool(fid_a and fid_b and (fid_a, fid_b) in file_edge_set)
+                strength_val = None
+                if fid_a and fid_b:
+                    avg = (file_commits.get(fid_a, 1) + file_commits.get(fid_b, 1)) / 2
+                    if avg > 0:
+                        strength_val = round(r["cochange_count"] / avg, 2)
+                pairs.append({
+                    "file_a": pa, "file_b": pb,
+                    "cochange_count": r["cochange_count"],
+                    "strength": strength_val,
+                    "has_structural_edge": has_struct,
+                })
+            click.echo(to_json({"pairs": pairs}))
+            return
 
         click.echo("=== Temporal coupling (co-change frequency) ===")
         click.echo(format_table(

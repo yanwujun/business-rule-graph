@@ -8,7 +8,7 @@ from roam.db.queries import (
     ALL_FILES, FILE_COUNT, TOP_SYMBOLS_BY_PAGERANK,
 )
 from roam.output.formatter import (
-    abbrev_kind, loc, format_signature, format_table, section,
+    abbrev_kind, loc, format_signature, format_table, section, to_json,
 )
 
 
@@ -22,8 +22,10 @@ def _ensure_index():
 @click.command("map")
 @click.option('-n', 'count', default=20, help='Number of top symbols to show')
 @click.option('--full', is_flag=True, help='Show all results without truncation')
-def map_cmd(count, full):
+@click.pass_context
+def map_cmd(ctx, count, full):
     """Show project skeleton with entry points and key symbols."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -34,18 +36,11 @@ def map_cmd(count, full):
         edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
 
         lang_counts = Counter(f["language"] for f in files if f["language"])
-        lang_str = ", ".join(f"{lang}={n}" for lang, n in lang_counts.most_common(8))
 
         # Edge kind distribution
         edge_kinds = conn.execute(
             "SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC"
         ).fetchall()
-        edge_str = ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds) if edge_kinds else "none"
-
-        click.echo(f"Files: {total_files}  Symbols: {sym_count}  Edges: {edge_count}")
-        click.echo(f"Languages: {lang_str}")
-        click.echo(f"Edge kinds: {edge_str}")
-        click.echo()
 
         # --- Top directories ---
         dir_rows_raw = conn.execute("""
@@ -56,12 +51,7 @@ def map_cmd(count, full):
             FROM files GROUP BY dir ORDER BY cnt DESC
         """).fetchall()
         dir_counts = {r["dir"]: r["cnt"] for r in dir_rows_raw}
-
         dir_items = sorted(dir_counts.items(), key=lambda x: x[1], reverse=True)
-        dir_rows = [[d, str(c)] for d, c in (dir_items if full else dir_items[:15])]
-        click.echo(section("Directories:", []))
-        click.echo(format_table(["dir", "files"], dir_rows, budget=0 if full else 15))
-        click.echo()
 
         # --- Entry points ---
         entry_names = {
@@ -72,8 +62,6 @@ def map_cmd(count, full):
         entries = [f["path"] for f in files
                    if os.path.basename(f["path"]) in entry_names]
 
-        # Also detect entry points by symbol analysis
-        # 1. Files containing main() functions
         main_files = conn.execute(
             "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
             "WHERE s.name = 'main' AND s.kind = 'function'",
@@ -82,7 +70,6 @@ def map_cmd(count, full):
             if r["path"] not in entries:
                 entries.append(r["path"])
 
-        # 2. Files with decorated entry points (@app.route, @click.command, etc.)
         decorated_files = conn.execute(
             "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
             "WHERE s.kind = 'decorator' AND (s.name LIKE '%route%' OR s.name LIKE '%command%')",
@@ -90,6 +77,46 @@ def map_cmd(count, full):
         for r in decorated_files:
             if r["path"] not in entries:
                 entries.append(r["path"])
+
+        # --- Top symbols by PageRank ---
+        top = conn.execute(TOP_SYMBOLS_BY_PAGERANK, (count,)).fetchall()
+
+        if json_mode:
+            data = {
+                "files": total_files,
+                "symbols": sym_count,
+                "edges": edge_count,
+                "languages": dict(lang_counts.most_common(8)),
+                "edge_kinds": {r["kind"]: r["cnt"] for r in edge_kinds},
+                "directories": [{"name": d, "files": c} for d, c in dir_items],
+                "entry_points": entries,
+                "top_symbols": [
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "signature": s["signature"] or "",
+                        "location": loc(s["file_path"], s["line_start"]),
+                        "pagerank": round(s["pagerank"], 4),
+                    }
+                    for s in top
+                ],
+            }
+            click.echo(to_json(data))
+            return
+
+        # --- Text output ---
+        lang_str = ", ".join(f"{lang}={n}" for lang, n in lang_counts.most_common(8))
+        edge_str = ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds) if edge_kinds else "none"
+
+        click.echo(f"Files: {total_files}  Symbols: {sym_count}  Edges: {edge_count}")
+        click.echo(f"Languages: {lang_str}")
+        click.echo(f"Edge kinds: {edge_str}")
+        click.echo()
+
+        dir_rows = [[d, str(c)] for d, c in (dir_items if full else dir_items[:15])]
+        click.echo(section("Directories:", []))
+        click.echo(format_table(["dir", "files"], dir_rows, budget=0 if full else 15))
+        click.echo()
 
         if entries:
             click.echo("Entry points:")
@@ -99,8 +126,6 @@ def map_cmd(count, full):
                 click.echo(f"  (+{len(entries) - 20} more)")
             click.echo()
 
-        # --- Top symbols by PageRank ---
-        top = conn.execute(TOP_SYMBOLS_BY_PAGERANK, (count,)).fetchall()
         if top:
             rows = []
             for s in top:

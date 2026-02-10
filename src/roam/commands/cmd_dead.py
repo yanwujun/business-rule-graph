@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import UNREFERENCED_EXPORTS
-from roam.output.formatter import abbrev_kind, loc, format_table
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json
 
 
 def _ensure_index():
@@ -16,15 +16,20 @@ def _ensure_index():
 
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
-def dead(show_all):
+@click.pass_context
+def dead(ctx, show_all):
     """Show unreferenced exported symbols (dead code)."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
 
         if not rows:
-            click.echo("=== Unreferenced Exports (0) ===")
-            click.echo("  (none -- all exports are referenced)")
+            if json_mode:
+                click.echo(to_json({"high_confidence": [], "low_confidence": []}))
+            else:
+                click.echo("=== Unreferenced Exports (0) ===")
+                click.echo("  (none -- all exports are referenced)")
             return
 
         # Split by confidence: file is imported (high) vs not imported (low)
@@ -87,6 +92,21 @@ def dead(show_all):
                 high.append(r)
             else:
                 low.append(r)
+
+        if json_mode:
+            click.echo(to_json({
+                "high_confidence": [
+                    {"name": r["name"], "kind": r["kind"],
+                     "location": loc(r["file_path"], r["line_start"])}
+                    for r in high
+                ],
+                "low_confidence": [
+                    {"name": r["name"], "kind": r["kind"],
+                     "location": loc(r["file_path"], r["line_start"])}
+                    for r in low
+                ],
+            }))
+            return
 
         click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===\n")
 

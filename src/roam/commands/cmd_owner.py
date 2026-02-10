@@ -6,7 +6,7 @@ import click
 
 from roam.db.connection import open_db, db_exists, find_project_root
 from roam.index.git_stats import get_blame_for_file
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -59,21 +59,21 @@ def _ownership_for_file(project_root, file_path):
 
 @click.command()
 @click.argument('path')
-def owner(path):
+@click.pass_context
+def owner(ctx, path):
     """Show code ownership: who owns a file or directory."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     project_root = find_project_root()
     path = path.replace("\\", "/")
 
     with open_db(readonly=True) as conn:
-        # Check if path is a directory (matches multiple files)
         dir_files = conn.execute(
             "SELECT id, path FROM files WHERE path LIKE ? ORDER BY path",
             (f"{path}%",),
         ).fetchall()
 
         if not dir_files:
-            # Try exact match
             frow = conn.execute(
                 "SELECT id, path FROM files WHERE path = ?", (path,)
             ).fetchone()
@@ -86,6 +86,45 @@ def owner(path):
                 click.echo(f"Path not found in index: {path}")
                 raise SystemExit(1)
             dir_files = [frow]
+
+        if json_mode:
+            if len(dir_files) == 1:
+                info = _ownership_for_file(project_root, dir_files[0]["path"])
+                data = {"path": dir_files[0]["path"], "type": "file"}
+                if info:
+                    data["main_dev"] = info["main_dev"]
+                    data["fragmentation"] = info["fragmentation"]
+                    data["authors"] = [
+                        {"name": a, "lines": n,
+                         "pct": round(n * 100 / info["total"]),
+                         "last_active": _format_date(info["last_active"].get(a, 0))}
+                        for a, n in info["authors"]
+                    ]
+                click.echo(to_json(data))
+            else:
+                file_ids = [f["id"] for f in dir_files]
+                ph = ",".join("?" for _ in file_ids)
+                rows = conn.execute(
+                    f"""SELECT gc.author, COUNT(DISTINCT gfc.commit_id) as commits,
+                               SUM(gfc.lines_added + gfc.lines_removed) as churn,
+                               MAX(gc.timestamp) as last_active,
+                               COUNT(DISTINCT gfc.file_id) as files_touched
+                        FROM git_file_changes gfc
+                        JOIN git_commits gc ON gfc.commit_id = gc.id
+                        WHERE gfc.file_id IN ({ph})
+                        GROUP BY gc.author ORDER BY churn DESC""",
+                    file_ids,
+                ).fetchall()
+                click.echo(to_json({
+                    "path": path, "type": "directory", "file_count": len(dir_files),
+                    "authors": [
+                        {"name": r["author"], "commits": r["commits"],
+                         "churn": r["churn"] or 0, "files_touched": r["files_touched"],
+                         "last_active": _format_date(r["last_active"])}
+                        for r in rows
+                    ],
+                }))
+            return
 
         if len(dir_files) == 1:
             _show_file_owner(conn, project_root, dir_files[0])

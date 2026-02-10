@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import db_exists, open_db
-from roam.output.formatter import abbrev_kind, loc, format_table
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json
 
 
 def _ensure_index():
@@ -15,8 +15,10 @@ def _ensure_index():
 @click.command()
 @click.argument("name")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
-def uses(name, full):
+@click.pass_context
+def uses(ctx, name, full):
     """Show all consumers of a symbol: callers, importers, inheritors."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -55,7 +57,10 @@ def uses(name, full):
         ).fetchall()
 
         if not rows:
-            click.echo(f"No consumers of '{name}' found.")
+            if json_mode:
+                click.echo(to_json({"symbol": name, "consumers": {}}))
+            else:
+                click.echo(f"No consumers of '{name}' found.")
             return
 
         # Group by edge kind
@@ -72,6 +77,29 @@ def uses(name, full):
             "uses_trait": "Used by (trait)",
             "template": "Used in template",
         }
+
+        if json_mode:
+            json_groups = {}
+            for kind, items in by_kind.items():
+                seen = set()
+                deduped = []
+                for r in items:
+                    key = (r["qualified_name"], r["path"])
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(r)
+                json_groups[kind] = [
+                    {"name": r["name"], "kind": r["kind"],
+                     "location": loc(r["path"], r["line_start"])}
+                    for r in deduped
+                ]
+            files = set(r["path"] for r in rows)
+            click.echo(to_json({
+                "symbol": name,
+                "consumers": json_groups,
+                "total_files": len(files),
+            }))
+            return
 
         total = 0
         click.echo(f"=== Consumers of '{name}' ===\n")

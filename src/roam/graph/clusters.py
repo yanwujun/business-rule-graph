@@ -41,23 +41,31 @@ def label_clusters(
 ) -> dict[int, str]:
     """Generate human-readable labels for clusters.
 
-    Uses the highest-PageRank symbol in each cluster as the label,
-    falling back to the most common directory prefix.
+    Strategy:
+    1. Find the majority directory for the cluster.
+    2. Pick the best representative symbol, preferring architectural
+       anchors (class/struct/interface/enum) over functions/variables,
+       breaking ties by PageRank.
+    3. Label = ``dir/Symbol`` when both exist, or just the directory.
+
     Returns ``{cluster_id: label}``.
     """
     if not clusters:
         return {}
+
+    # Architectural kinds are better anchors for labeling
+    _ANCHOR_KINDS = {"class", "struct", "interface", "enum", "trait", "module"}
 
     # Group symbols by cluster
     groups: dict[int, list[int]] = defaultdict(list)
     for node_id, cid in clusters.items():
         groups[cid].append(node_id)
 
-    # Fetch file paths and pagerank for all symbols in one query
+    # Fetch file paths, kind, and pagerank for all symbols in one query
     all_ids = list(clusters.keys())
     placeholders = ",".join("?" for _ in all_ids)
     rows = conn.execute(
-        f"SELECT s.id, s.name, f.path, COALESCE(gm.pagerank, 0) as pagerank "
+        f"SELECT s.id, s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pagerank "
         f"FROM symbols s "
         f"JOIN files f ON s.file_id = f.id "
         f"LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
@@ -68,43 +76,53 @@ def label_clusters(
     id_to_info: dict[int, dict] = {}
     for r in rows:
         id_to_path[r["id"]] = r["path"]
-        id_to_info[r["id"]] = {"name": r["name"], "pagerank": r["pagerank"]}
+        id_to_info[r["id"]] = {
+            "name": r["name"], "kind": r["kind"],
+            "pagerank": r["pagerank"],
+        }
 
     labels: dict[int, str] = {}
     for cid, members in groups.items():
-        # Try to use the highest-PageRank symbol as the label
+        # Determine majority directory
+        dirs = [
+            os.path.dirname(id_to_path[m]).replace("\\", "/")
+            for m in members if m in id_to_path
+        ]
+        if dirs:
+            most_common_dir = Counter(dirs).most_common(1)[0][0]
+            short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
+        else:
+            short_dir = ""
+
+        # Pick best representative symbol:
+        # 1st pass: anchor kinds (class/struct/interface) by PageRank
+        # 2nd pass: any kind by PageRank
         best_name = None
         best_pr = -1
         for m in members:
             info = id_to_info.get(m)
-            if info and info["pagerank"] > best_pr:
+            if info and info["kind"] in _ANCHOR_KINDS and info["pagerank"] > best_pr:
                 best_pr = info["pagerank"]
                 best_name = info["name"]
 
-        if best_name and best_pr > 0:
-            # Add directory context for disambiguation
-            dirs = [
-                os.path.dirname(id_to_path[m]).replace("\\", "/")
-                for m in members if m in id_to_path
-            ]
-            if dirs:
-                most_common_dir = Counter(dirs).most_common(1)[0][0]
-                short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
-                labels[cid] = f"{best_name} ({short_dir})" if short_dir else best_name
-            else:
-                labels[cid] = best_name
+        if best_name is None:
+            # No anchor kind found — use highest PageRank of any kind
+            best_pr = -1
+            for m in members:
+                info = id_to_info.get(m)
+                if info and info["pagerank"] > best_pr:
+                    best_pr = info["pagerank"]
+                    best_name = info["name"]
+
+        # Build label: prefer "dir/Symbol", fall back to just directory
+        if best_name and best_pr > 0 and short_dir:
+            labels[cid] = f"{short_dir}/{best_name}"
+        elif best_name and best_pr > 0:
+            labels[cid] = best_name
+        elif short_dir:
+            labels[cid] = short_dir
         else:
-            # Fallback: directory-based label
-            dirs = [
-                os.path.dirname(id_to_path[m]).replace("\\", "/")
-                for m in members if m in id_to_path
-            ]
-            if not dirs:
-                labels[cid] = f"cluster-{cid}"
-                continue
-            most_common_dir = Counter(dirs).most_common(1)[0][0]
-            short = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else "root"
-            labels[cid] = short or f"cluster-{cid}"
+            labels[cid] = f"cluster-{cid}"
     return labels
 
 

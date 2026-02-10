@@ -2,7 +2,7 @@ import click
 
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTS, FILE_IMPORTED_BY
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -15,8 +15,10 @@ def _ensure_index():
 @click.command()
 @click.argument('path')
 @click.option('--full', is_flag=True, help='Show all results without truncation')
-def deps(path, full):
+@click.pass_context
+def deps(ctx, path, full):
     """Show file import/imported-by relationships."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     path = path.replace("\\", "/")
@@ -32,13 +34,10 @@ def deps(path, full):
             click.echo(f"File not found in index: {path}")
             raise SystemExit(1)
 
-        click.echo(f"{frow['path']}")
-        click.echo()
-
-        # --- Imports (what this file depends on) ---
+        # --- Imports ---
         imports = conn.execute(FILE_IMPORTS, (frow["id"],)).fetchall()
+        used_from: dict = {}
         if imports:
-            # Build symbol breakdown: which symbols from each imported file are used
             import_file_ids = set(i["id"] for i in imports)
             sym_edges = conn.execute(
                 "SELECT s_tgt.file_id as tgt_fid, s_tgt.name as tgt_name "
@@ -48,11 +47,36 @@ def deps(path, full):
                 "WHERE s_src.file_id = ? AND s_tgt.file_id != ?",
                 (frow["id"], frow["id"]),
             ).fetchall()
-            used_from: dict = {}
             for se in sym_edges:
                 if se["tgt_fid"] in import_file_ids:
                     used_from.setdefault(se["tgt_fid"], set()).add(se["tgt_name"])
 
+        # --- Imported by ---
+        imported_by = conn.execute(FILE_IMPORTED_BY, (frow["id"],)).fetchall()
+
+        if json_mode:
+            click.echo(to_json({
+                "path": frow["path"],
+                "imports": [
+                    {
+                        "path": i["path"],
+                        "symbol_count": i["symbol_count"],
+                        "used_symbols": sorted(used_from.get(i["id"], set())),
+                    }
+                    for i in imports
+                ],
+                "imported_by": [
+                    {"path": i["path"], "symbol_count": i["symbol_count"]}
+                    for i in imported_by
+                ],
+            }))
+            return
+
+        # --- Text output ---
+        click.echo(f"{frow['path']}")
+        click.echo()
+
+        if imports:
             rows = []
             for i in imports:
                 names = used_from.get(i["id"], set())
@@ -66,8 +90,6 @@ def deps(path, full):
             click.echo("Imports: (none)")
         click.echo()
 
-        # --- Imported by (who depends on this file) ---
-        imported_by = conn.execute(FILE_IMPORTED_BY, (frow["id"],)).fetchall()
         if imported_by:
             rows = [[i["path"], str(i["symbol_count"])] for i in imported_by]
             click.echo("Imported by:")

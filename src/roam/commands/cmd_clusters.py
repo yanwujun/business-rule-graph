@@ -5,7 +5,7 @@ import click
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.clusters import compare_with_directories
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -17,11 +17,39 @@ def _ensure_index():
 
 @click.command()
 @click.option('--min-size', default=3, show_default=True, help='Hide clusters smaller than this')
-def clusters(min_size):
+@click.pass_context
+def clusters(ctx, min_size):
     """Show code clusters and directory mismatches."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(ALL_CLUSTERS).fetchall()
+
+        if json_mode:
+            visible = [r for r in rows if r["size"] >= min_size]
+            mismatches = compare_with_directories(conn)
+            visible_ids = {r["cluster_id"] for r in visible}
+            click.echo(to_json({
+                "clusters": [
+                    {
+                        "id": r["cluster_id"],
+                        "label": r["cluster_label"],
+                        "size": r["size"],
+                        "members": r["members"] or "",
+                    }
+                    for r in visible
+                ],
+                "mismatches": [
+                    {
+                        "cluster_id": m["cluster_id"],
+                        "label": m["cluster_label"],
+                        "mismatch_count": m["mismatch_count"],
+                        "directories": m["directories"],
+                    }
+                    for m in mismatches if m["cluster_id"] in visible_ids
+                ],
+            }))
+            return
 
         click.echo("=== Clusters ===")
         if rows:

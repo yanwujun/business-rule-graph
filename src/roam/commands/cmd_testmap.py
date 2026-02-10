@@ -5,7 +5,7 @@ import os
 import click
 
 from roam.db.connection import open_db, db_exists
-from roam.output.formatter import abbrev_kind, loc, format_edge_kind
+from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json
 
 
 TEST_PATTERNS_NAME = ["test_", "_test.", ".test.", ".spec."]
@@ -202,15 +202,15 @@ def _test_map_file(conn, path):
 
 @click.command("test-map")
 @click.argument('name')
-def test_map(name):
+@click.pass_context
+def test_map(ctx, name):
     """Map a symbol or file to its test coverage."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
-    # Normalise path separators
     name_norm = name.replace("\\", "/")
 
     with open_db(readonly=True) as conn:
-        # Try as file path first (if it contains / or ends with a known extension)
         if "/" in name_norm or "." in name_norm:
             frow = conn.execute("SELECT id FROM files WHERE path = ?", (name_norm,)).fetchone()
             if frow is None:
@@ -218,15 +218,99 @@ def test_map(name):
                     "SELECT id FROM files WHERE path LIKE ? LIMIT 1", (f"%{name_norm}",)
                 ).fetchone()
             if frow:
-                _test_map_file(conn, name_norm)
+                if json_mode:
+                    _test_map_file_json(conn, name_norm)
+                else:
+                    _test_map_file(conn, name_norm)
                 return
 
-        # Try as symbol name
         sym = _find_symbol(conn, name)
         if sym:
-            _test_map_symbol(conn, sym)
+            if json_mode:
+                _test_map_symbol_json(conn, sym)
+            else:
+                _test_map_symbol(conn, sym)
             return
 
         click.echo(f"Not found: {name}")
-        click.echo("Provide a symbol name or file path.")
         raise SystemExit(1)
+
+
+def _test_map_symbol_json(conn, sym):
+    """JSON output for test-map on a symbol."""
+    callers = conn.execute(
+        "SELECT s.name, s.kind, f.path as file_path, e.kind as edge_kind "
+        "FROM edges e JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id WHERE e.target_id = ?",
+        (sym["id"],),
+    ).fetchall()
+    direct_tests = [c for c in callers if _is_test_file(c["file_path"])]
+
+    sym_file_id = conn.execute(
+        "SELECT id FROM files WHERE path = ?", (sym["file_path"],)
+    ).fetchone()
+    test_importers = []
+    if sym_file_id:
+        importers = conn.execute(
+            "SELECT f.path, fe.symbol_count FROM file_edges fe "
+            "JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
+            (sym_file_id["id"],),
+        ).fetchall()
+        test_importers = [r for r in importers if _is_test_file(r["path"])]
+
+    click.echo(to_json({
+        "name": sym["name"], "kind": sym["kind"],
+        "location": loc(sym["file_path"], sym["line_start"]),
+        "direct_tests": [
+            {"name": t["name"], "kind": t["kind"], "file": t["file_path"],
+             "edge_kind": t["edge_kind"]}
+            for t in direct_tests
+        ],
+        "test_importers": [
+            {"path": r["path"], "symbols_used": r["symbol_count"]}
+            for r in test_importers
+        ],
+    }))
+
+
+def _test_map_file_json(conn, path):
+    """JSON output for test-map on a file."""
+    frow = conn.execute("SELECT * FROM files WHERE path = ?", (path,)).fetchone()
+    if frow is None:
+        frow = conn.execute(
+            "SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)
+        ).fetchone()
+    if frow is None:
+        click.echo(to_json({"error": f"File not found: {path}"}))
+        return
+
+    importers = conn.execute(
+        "SELECT f.path, fe.symbol_count FROM file_edges fe "
+        "JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
+        (frow["id"],),
+    ).fetchall()
+    test_importers = [r for r in importers if _is_test_file(r["path"])]
+
+    sym_ids = conn.execute(
+        "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
+    ).fetchall()
+    test_caller_files = []
+    if sym_ids:
+        ph = ",".join("?" for _ in sym_ids)
+        ids = [s["id"] for s in sym_ids]
+        test_callers = conn.execute(
+            f"SELECT DISTINCT f.path FROM edges e "
+            f"JOIN symbols s ON e.source_id = s.id "
+            f"JOIN files f ON s.file_id = f.id WHERE e.target_id IN ({ph})",
+            ids,
+        ).fetchall()
+        test_caller_files = [r["path"] for r in test_callers if _is_test_file(r["path"])]
+
+    click.echo(to_json({
+        "path": frow["path"],
+        "test_importers": [
+            {"path": r["path"], "symbols_used": r["symbol_count"]}
+            for r in test_importers
+        ],
+        "test_callers": test_caller_files,
+    }))

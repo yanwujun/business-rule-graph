@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db, db_exists
 from roam.db.queries import TOP_CHURN_FILES
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -16,13 +16,18 @@ def _ensure_index():
 
 @click.command()
 @click.option('-n', 'count', default=20, help='Number of hotspots')
-def weather(count):
+@click.pass_context
+def weather(ctx, count):
     """Show code hotspots: churn x complexity ranking."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(TOP_CHURN_FILES, (count * 2,)).fetchall()
         if not rows:
-            click.echo("No churn data available. Is this a git repository?")
+            if json_mode:
+                click.echo(to_json({"hotspots": []}))
+            else:
+                click.echo("No churn data available. Is this a git repository?")
             return
 
         scored = []
@@ -32,7 +37,6 @@ def weather(count):
             score = churn * complexity
             commits = r["commit_count"] or 0
             authors = r["distinct_authors"] or 0
-            # Determine the primary driver
             if churn > 100 and complexity > 5:
                 reason = "BOTH"
             elif churn > complexity * 20:
@@ -41,6 +45,19 @@ def weather(count):
                 reason = "HIGH-COMPLEXITY"
             scored.append((score, churn, complexity, commits, authors, reason, r["path"]))
         scored.sort(reverse=True)
+
+        if json_mode:
+            click.echo(to_json({
+                "hotspots": [
+                    {
+                        "path": path, "score": round(score), "churn": churn,
+                        "complexity": round(complexity, 1), "commits": commits,
+                        "authors": authors, "reason": reason,
+                    }
+                    for score, churn, complexity, commits, authors, reason, path in scored[:count]
+                ],
+            }))
+            return
 
         table_rows = []
         for score, churn, complexity, commits, authors, reason, path in scored[:count]:

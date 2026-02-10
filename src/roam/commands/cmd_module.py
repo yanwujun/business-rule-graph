@@ -5,7 +5,7 @@ from roam.db.queries import (
     FILES_IN_DIR, SYMBOLS_IN_DIR, FILE_IMPORTS, FILE_IMPORTED_BY,
 )
 from roam.output.formatter import (
-    abbrev_kind, loc, format_signature, format_table, section,
+    abbrev_kind, loc, format_signature, format_table, section, to_json,
 )
 
 
@@ -18,8 +18,10 @@ def _ensure_index():
 
 @click.command()
 @click.argument('path')
-def module(path):
+@click.pass_context
+def module(ctx, path):
     """Show directory contents: exports, signatures, deps."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     path = path.replace("\\", "/").rstrip("/")
@@ -150,6 +152,27 @@ def module(path):
             total_edges = 0
 
         ext_importers = len(imported_by_external)
+
+        if json_mode:
+            click.echo(to_json({
+                "path": path,
+                "file_count": len(files),
+                "files": [{"path": f["path"], "language": f["language"], "lines": f["line_count"]}
+                          for f in files],
+                "symbols": [
+                    {"name": s["name"], "kind": s["kind"],
+                     "signature": s["signature"] or "",
+                     "location": loc(s["file_path"], s["line_start"])}
+                    for s in (symbols or [])
+                ],
+                "external_imports": dict(sorted(imports_external.items(), key=lambda x: -x[1])),
+                "imported_by_external": dict(sorted(imported_by_external.items(), key=lambda x: -x[1])),
+                "cohesion_pct": round(cohesion),
+                "api_surface_pct": round(api_surface),
+                "external_importers": ext_importers,
+            }))
+            return
+
         click.echo(f"Cohesion: {cohesion:.0f}% ({internal_edges}/{total_edges} edges are internal)")
         click.echo(f"API surface: {api_surface:.0f}% exported ({exported_count}/{total_syms} symbols)")
         click.echo(f"Reused by: {ext_importers} external files")

@@ -6,7 +6,7 @@ from collections import defaultdict
 import click
 
 from roam.db.connection import open_db, db_exists
-from roam.output.formatter import abbrev_kind, format_signature
+from roam.output.formatter import abbrev_kind, format_signature, to_json
 
 
 def _ensure_index():
@@ -19,8 +19,10 @@ def _ensure_index():
 @click.command()
 @click.argument('directory')
 @click.option('--full', is_flag=True, help='Show all symbols, not just exported')
-def sketch(directory, full):
+@click.pass_context
+def sketch(ctx, directory, full):
     """Show compact structural skeleton of a directory."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     # Normalise path separators
@@ -65,14 +67,34 @@ def sketch(directory, full):
                 ).fetchall()
 
         if not symbols:
-            click.echo(f"No {'symbols' if full else 'exported symbols'} found in: {directory}/")
-            click.echo("Hint: use a path relative to the project root.")
+            if json_mode:
+                click.echo(to_json({"directory": directory, "files": {}, "symbol_count": 0}))
+            else:
+                click.echo(f"No {'symbols' if full else 'exported symbols'} found in: {directory}/")
+                click.echo("Hint: use a path relative to the project root.")
             return
 
         # Group by file
         by_file = defaultdict(list)
         for s in symbols:
             by_file[s["file_path"]].append(s)
+
+        if json_mode:
+            result = {}
+            for fp in sorted(by_file.keys()):
+                result[fp] = [
+                    {
+                        "name": s["name"], "kind": s["kind"],
+                        "signature": s["signature"] or "",
+                        "line_start": s["line_start"],
+                        "line_end": s["line_end"],
+                        "docstring": (s["docstring"] or "").strip().split("\n")[0][:80] if s["docstring"] else "",
+                    }
+                    for s in by_file[fp]
+                ]
+            click.echo(to_json({"directory": directory, "file_count": len(by_file),
+                                "symbol_count": len(symbols), "files": result}))
+            return
 
         # Count files and symbols
         file_count = len(by_file)

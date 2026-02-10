@@ -6,6 +6,7 @@ from collections import Counter
 import click
 
 from roam.db.connection import open_db, db_exists, find_project_root
+from roam.output.formatter import to_json
 
 
 def _ensure_index():
@@ -228,8 +229,11 @@ def _section_dependencies(conn):
 
 @click.command()
 @click.option('--write', is_flag=True, help='Write output to CLAUDE.md in project root')
-def describe(write):
+@click.option('--force', is_flag=True, help='Overwrite existing CLAUDE.md without confirmation')
+@click.pass_context
+def describe(ctx, write, force):
     """Auto-generate a project description (suitable for CLAUDE.md)."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -245,9 +249,17 @@ def describe(write):
 
         output = "\n".join(line for sec in sections for line in sec)
 
+    if json_mode:
+        click.echo(to_json({"markdown": output}))
+        return
+
     if write:
         root = find_project_root()
         out_path = root / "CLAUDE.md"
+        if out_path.exists() and not force:
+            click.echo(f"CLAUDE.md already exists at {out_path}")
+            click.echo("Use --force to overwrite, or omit --write to print to stdout.")
+            return
         out_path.write_text(output, encoding="utf-8")
         click.echo(f"Wrote {out_path}")
     else:

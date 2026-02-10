@@ -57,6 +57,9 @@ class LazyGroup(click.Group):
 
 @click.group(cls=LazyGroup)
 @click.version_option(package_name="roam-code")
-def cli():
+@click.option('--json', 'json_mode', is_flag=True, help='Output in JSON format')
+@click.pass_context
+def cli(ctx, json_mode):
     """Roam: Codebase comprehension tool."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj['json'] = json_mode

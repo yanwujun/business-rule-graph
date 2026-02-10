@@ -3,19 +3,25 @@ from collections import Counter
 
 import click
 
+from roam.output.formatter import to_json
+
 
 @click.command()
 @click.option('--force', is_flag=True, help='Force full reindex')
 @click.option('--verbose', is_flag=True, help='Show detailed warnings during indexing')
-def index(force, verbose):
+@click.pass_context
+def index(ctx, force, verbose):
     """Build or rebuild the codebase index."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     from roam.index.indexer import Indexer
     from roam.db.connection import open_db, db_exists
     t0 = time.monotonic()
     indexer = Indexer()
     indexer.run(force=force, verbose=verbose)
     elapsed = time.monotonic() - t0
-    click.echo(f"Index complete. ({elapsed:.1f}s)")
+
+    if not json_mode:
+        click.echo(f"Index complete. ({elapsed:.1f}s)")
 
     # Show summary stats
     if db_exists():
@@ -27,16 +33,34 @@ def index(force, verbose):
             lang_rows = conn.execute(
                 "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
             ).fetchall()
-            lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
 
-            avg_sym = f"{sym_count / file_count:.1f}" if file_count else "0"
+            avg_sym = sym_count / file_count if file_count else 0
 
-            # Parse error rate
-            parsed_ok = conn.execute(
-                "SELECT COUNT(*) FROM files WHERE id IN (SELECT DISTINCT file_id FROM symbols)"
+            # Parse coverage: only count files with a parseable language
+            from roam.languages.registry import _SUPPORTED_LANGUAGES
+            parseable_langs = ",".join(f"'{l}'" for l in _SUPPORTED_LANGUAGES)
+            parseable_count = conn.execute(
+                f"SELECT COUNT(*) FROM files WHERE language IN ({parseable_langs})"
             ).fetchone()[0]
-            error_pct = (file_count - parsed_ok) * 100 / file_count if file_count else 0
+            parsed_ok = conn.execute(
+                f"SELECT COUNT(DISTINCT f.id) FROM files f "
+                f"JOIN symbols s ON s.file_id = f.id "
+                f"WHERE f.language IN ({parseable_langs})"
+            ).fetchone()[0]
+            coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
-            click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
-            click.echo(f"  Languages: {lang_str}")
-            click.echo(f"  Avg symbols/file: {avg_sym}  Parse coverage: {100 - error_pct:.0f}%")
+            if json_mode:
+                click.echo(to_json({
+                    "elapsed_s": round(elapsed, 1),
+                    "files": file_count,
+                    "symbols": sym_count,
+                    "edges": edge_count,
+                    "languages": {r["language"]: r["cnt"] for r in lang_rows[:8]},
+                    "avg_symbols_per_file": round(avg_sym, 1),
+                    "parse_coverage_pct": round(coverage, 0),
+                }))
+            else:
+                lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
+                click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
+                click.echo(f"  Languages: {lang_str}")
+                click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")

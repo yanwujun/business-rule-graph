@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db, db_exists
-from roam.output.formatter import abbrev_kind, loc, format_table
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json
 
 
 def _ensure_index():
@@ -42,8 +42,10 @@ def _find_symbol(conn, name):
 
 @click.command()
 @click.argument('name')
-def impact(name):
+@click.pass_context
+def impact(ctx, name):
     """Show blast radius: what breaks if a symbol changes."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -54,6 +56,13 @@ def impact(name):
             raise SystemExit(1)
 
         if isinstance(result, list):
+            if json_mode:
+                click.echo(to_json({"error": "ambiguous", "matches": [
+                    {"name": s["qualified_name"] or s["name"], "kind": s["kind"],
+                     "location": loc(s["file_path"], s["line_start"])}
+                    for s in result
+                ]}))
+                return
             click.echo(f"Multiple matches for '{name}':")
             for s in result:
                 click.echo(f"  {abbrev_kind(s['kind'])}  {s['qualified_name'] or s['name']}  {loc(s['file_path'], s['line_start'])}")
@@ -63,8 +72,9 @@ def impact(name):
         sym = result
         sym_id = sym["id"]
 
-        click.echo(f"{abbrev_kind(sym['kind'])}  {sym['qualified_name'] or sym['name']}  {loc(sym['file_path'], sym['line_start'])}")
-        click.echo()
+        if not json_mode:
+            click.echo(f"{abbrev_kind(sym['kind'])}  {sym['qualified_name'] or sym['name']}  {loc(sym['file_path'], sym['line_start'])}")
+            click.echo()
 
         # Build transitive closure using NetworkX
         try:
@@ -85,7 +95,14 @@ def impact(name):
         dependents = nx.descendants(RG, sym_id)
 
         if not dependents:
-            click.echo("No dependents found.")
+            if json_mode:
+                click.echo(to_json({
+                    "symbol": sym["qualified_name"] or sym["name"],
+                    "affected_symbols": 0, "affected_files": 0,
+                    "direct_dependents": {}, "affected_file_list": [],
+                }))
+            else:
+                click.echo("No dependents found.")
             return
 
         # Collect affected files and group direct callers by edge kind
@@ -105,6 +122,22 @@ def impact(name):
                     node.get("name", "?"),
                     loc(node.get("file_path", "?"), None),
                 ])
+
+        if json_mode:
+            json_deps = {}
+            for edge_kind, items in by_kind.items():
+                json_deps[edge_kind] = [
+                    {"name": i[1], "kind": i[0], "file": i[2]}
+                    for i in items
+                ]
+            click.echo(to_json({
+                "symbol": sym["qualified_name"] or sym["name"],
+                "affected_symbols": len(dependents),
+                "affected_files": len(affected_files),
+                "direct_dependents": json_deps,
+                "affected_file_list": sorted(affected_files),
+            }))
+            return
 
         click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")
         click.echo()

@@ -1,5 +1,7 @@
 """Token-efficient text formatting for AI consumption."""
 
+import json as _json
+
 KIND_ABBREV = {
     "function": "fn",
     "class": "cls",
@@ -97,3 +99,13 @@ def format_table(headers: list[str], rows: list[list[str]],
     if budget and len(rows) > budget:
         lines.append(f"(+{len(rows) - budget} more)")
     return "\n".join(lines)
+
+
+def to_json(data) -> str:
+    """Serialize data to a JSON string."""
+    return _json.dumps(data, indent=2, default=str)
+
+
+def table_to_dicts(headers: list[str], rows: list[list[str]]) -> list[dict]:
+    """Convert table headers + rows into a list of dicts (for JSON output)."""
+    return [dict(zip(headers, row)) for row in rows]

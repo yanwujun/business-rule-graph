@@ -5,7 +5,7 @@ import subprocess
 import click
 
 from roam.db.connection import open_db, db_exists, find_project_root
-from roam.output.formatter import format_table
+from roam.output.formatter import format_table, to_json
 
 
 def _ensure_index():
@@ -15,10 +15,12 @@ def _ensure_index():
         Indexer().run()
 
 
-def _get_changed_files(root, staged):
+def _get_changed_files(root, staged, commit_range=None):
     """Get list of changed files from git diff."""
     cmd = ["git", "diff", "--name-only"]
-    if staged:
+    if commit_range:
+        cmd.append(commit_range)
+    elif staged:
         cmd.append("--cached")
     try:
         result = subprocess.run(
@@ -37,17 +39,27 @@ def _get_changed_files(root, staged):
 
 
 @click.command("diff")
+@click.argument('commit_range', required=False, default=None)
 @click.option('--staged', is_flag=True, help='Analyze staged changes instead of unstaged')
 @click.option('--full', is_flag=True, help='Show all results without truncation')
-def diff_cmd(staged, full):
-    """Show blast radius: what code is affected by your changes."""
+@click.pass_context
+def diff_cmd(ctx, commit_range, staged, full):
+    """Show blast radius: what code is affected by your changes.
+
+    Optionally pass a COMMIT_RANGE (e.g. HEAD~3..HEAD, abc123, main..feature)
+    to analyze committed changes instead of uncommitted ones.
+    """
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     root = find_project_root()
 
-    changed = _get_changed_files(root, staged)
+    changed = _get_changed_files(root, staged, commit_range)
     if not changed:
-        label = "staged" if staged else "unstaged"
-        click.echo(f"No {label} changes found.")
+        if commit_range:
+            label = commit_range
+        else:
+            label = "staged" if staged else "unstaged"
+        click.echo(f"No changes found for {label}.")
         return
 
     with open_db(readonly=True) as conn:
@@ -123,8 +135,23 @@ def diff_cmd(staged, full):
         # Sort by blast radius
         file_impacts.sort(key=lambda x: x["affected_syms"], reverse=True)
 
+        if json_mode:
+            click.echo(to_json({
+                "label": commit_range or ("staged" if staged else "unstaged"),
+                "changed_files": len(file_map),
+                "symbols_defined": total_syms,
+                "affected_symbols": len(all_affected_syms),
+                "affected_files": len(all_affected_files),
+                "per_file": file_impacts,
+                "blast_radius": sorted(all_affected_files),
+            }))
+            return
+
         # Output
-        label = "staged" if staged else "unstaged"
+        if commit_range:
+            label = commit_range
+        else:
+            label = "staged" if staged else "unstaged"
         click.echo(f"=== Blast Radius ({label} changes) ===\n")
         click.echo(f"Changed files: {len(file_map)}  Symbols defined: {total_syms}")
         click.echo(f"Affected symbols: {len(all_affected_syms)}  Affected files: {len(all_affected_files)}")

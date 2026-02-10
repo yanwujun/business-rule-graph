@@ -5,7 +5,7 @@ import click
 from roam.db.connection import open_db, db_exists
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers, find_violations, format_layers
-from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines
+from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json
 
 import networkx as nx
 
@@ -18,19 +18,64 @@ def _ensure_index():
 
 
 @click.command()
-def layers():
+@click.pass_context
+def layers(ctx):
     """Show dependency layers and violations."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
         layer_map = detect_layers(G)
 
         if not layer_map:
-            click.echo("No layers detected (graph is empty).")
+            if json_mode:
+                click.echo(to_json({"layers": [], "violations": []}))
+            else:
+                click.echo("No layers detected (graph is empty).")
             return
 
         formatted = format_layers(layer_map, conn)
         max_layer = max(l["layer"] for l in formatted) if formatted else 0
+
+        violations = find_violations(G, layer_map)
+
+        if json_mode:
+            # Lookup violation names
+            v_lookup = {}
+            if violations:
+                all_ids = {v["source"] for v in violations} | {v["target"] for v in violations}
+                ph = ",".join("?" for _ in all_ids)
+                for r in conn.execute(
+                    f"SELECT s.id, s.name, f.path as file_path "
+                    f"FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+                    list(all_ids),
+                ).fetchall():
+                    v_lookup[r["id"]] = r
+
+            click.echo(to_json({
+                "total_layers": max_layer + 1,
+                "layers": [
+                    {
+                        "layer": l["layer"],
+                        "symbol_count": len(l["symbols"]),
+                        "symbols": [
+                            {"name": s["name"], "kind": s["kind"]}
+                            for s in l["symbols"][:50]
+                        ],
+                    }
+                    for l in formatted
+                ],
+                "violations": [
+                    {
+                        "source": v_lookup.get(v["source"], {}).get("name", "?"),
+                        "source_layer": v["source_layer"],
+                        "target": v_lookup.get(v["target"], {}).get("name", "?"),
+                        "target_layer": v["target_layer"],
+                    }
+                    for v in violations
+                ],
+            }))
+            return
 
         total_symbols = sum(len(l["symbols"]) for l in formatted)
         layer0_count = next((len(l["symbols"]) for l in formatted if l["layer"] == 0), 0)
@@ -104,7 +149,6 @@ def layers():
                 pass
 
         # --- Violations ---
-        violations = find_violations(G, layer_map)
         click.echo(f"\n=== Violations ({len(violations)}) ===")
         if violations:
             all_ids = {v["source"] for v in violations} | {v["target"] for v in violations}

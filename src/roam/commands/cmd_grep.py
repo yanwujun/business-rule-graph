@@ -7,7 +7,7 @@ import subprocess
 import click
 
 from roam.db.connection import db_exists, find_project_root, open_db
-from roam.output.formatter import abbrev_kind, loc
+from roam.output.formatter import abbrev_kind, loc, to_json
 
 
 def _ensure_index():
@@ -114,8 +114,10 @@ def _find_enclosing_symbol(conn, file_path, line_num):
 @click.option("-g", "--glob", "glob_filter", default=None,
               help="Filter by file type or glob (e.g. 'vue', '.ts', '*.php')")
 @click.option("-n", "count", default=50, help="Max results to show")
-def grep_cmd(pattern, glob_filter, count):
+@click.pass_context
+def grep_cmd(ctx, pattern, glob_filter, count):
     """Context-enriched grep: search with enclosing symbol annotation."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
     root = find_project_root()
 
@@ -126,7 +128,23 @@ def grep_cmd(pattern, glob_filter, count):
 
     matches = _grep_files(pattern, root, glob_filter)
     if not matches:
-        click.echo(f"No matches for '{pattern}'")
+        if json_mode:
+            click.echo(to_json({"pattern": pattern, "matches": []}))
+        else:
+            click.echo(f"No matches for '{pattern}'")
+        return
+
+    if json_mode:
+        with open_db(readonly=True) as conn:
+            results = []
+            for m in matches[:count]:
+                sym = _find_enclosing_symbol(conn, m["path"], m["line"])
+                entry = {"path": m["path"], "line": m["line"], "content": m["content"]}
+                if sym:
+                    entry["enclosing_symbol"] = sym["qualified_name"]
+                    entry["enclosing_kind"] = sym["kind"]
+                results.append(entry)
+            click.echo(to_json({"pattern": pattern, "total": len(matches), "matches": results}))
         return
 
     click.echo(f"=== {len(matches)} matches for '{pattern}' ===\n")

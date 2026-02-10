@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db, db_exists
-from roam.output.formatter import abbrev_kind, loc, format_table
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json
 
 
 def _ensure_index():
@@ -16,8 +16,10 @@ def _ensure_index():
 @click.command()
 @click.argument('mode', default='symbol', type=click.Choice(['symbol', 'file']))
 @click.option('-n', 'count', default=20, help='Number of items to show')
-def fan(mode, count):
+@click.pass_context
+def fan(ctx, mode, count):
     """Show fan-in/fan-out: most connected symbols or files."""
+    json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -36,7 +38,27 @@ def fan(mode, count):
             """, (count,)).fetchall()
 
             if not rows:
-                click.echo("No graph metrics available. Run `roam index` first.")
+                if json_mode:
+                    click.echo(to_json({"mode": mode, "items": []}))
+                else:
+                    click.echo("No graph metrics available. Run `roam index` first.")
+                return
+
+            if json_mode:
+                click.echo(to_json({
+                    "mode": mode,
+                    "items": [
+                        {
+                            "name": r["name"], "kind": r["kind"],
+                            "fan_in": r["in_degree"], "fan_out": r["out_degree"],
+                            "total": r["in_degree"] + r["out_degree"],
+                            "betweenness": round(r["betweenness"] or 0, 1),
+                            "pagerank": round(r["pagerank"] or 0, 4),
+                            "location": loc(r["file_path"], r["line_start"]),
+                        }
+                        for r in rows
+                    ],
+                }))
                 return
 
             table_rows = []
@@ -87,7 +109,24 @@ def fan(mode, count):
             """, (count,)).fetchall()
 
             if not rows:
-                click.echo("No file edges available. Run `roam index` first.")
+                if json_mode:
+                    click.echo(to_json({"mode": mode, "items": []}))
+                else:
+                    click.echo("No file edges available. Run `roam index` first.")
+                return
+
+            if json_mode:
+                click.echo(to_json({
+                    "mode": mode,
+                    "items": [
+                        {
+                            "path": r["path"],
+                            "fan_in": r["fan_in"], "fan_out": r["fan_out"],
+                            "total": r["fan_in"] + r["fan_out"],
+                        }
+                        for r in rows
+                    ],
+                }))
                 return
 
             table_rows = []
