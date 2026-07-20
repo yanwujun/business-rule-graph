@@ -101,31 +101,53 @@ class ConflictDetector:
         return results
 
     def _auth_removed(self, snapshot_id: int) -> list[Conflict]:
-        """检测被移除的权限规则"""
+        """检测被移除的权限规则 — 从快照的 removed_rules 中查找"""
         results = []
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             snap = conn.execute(
-                "SELECT removed_rules FROM business_rule_snapshots WHERE id=?",
+                "SELECT * FROM business_rule_snapshots WHERE id=?",
                 (snapshot_id,),
             ).fetchone()
             if not snap:
                 return []
+
             try:
                 removed = json.loads(snap["removed_rules"])
             except (json.JSONDecodeError, TypeError):
                 return []
-            for rule_id in removed:
-                old = conn.execute(
-                    "SELECT * FROM business_rules WHERE rule_id=? AND rule_type='authorization'",
-                    (rule_id,),
-                ).fetchone()
-                if old:
-                    results.append(Conflict(
-                        conflict_type="auth_removed",
-                        severity="high",
-                        rule_a=dict(old),
-                        rule_b=None,
-                        description=f"权限规则被移除: {rule_id} ({old['source_file']}:{old['source_line']})",
-                    ))
+
+            # 从快照中取出上一版本的规则详情(存 snapshot 时需同时存规则数据)
+            # 简单方案: 比较 removed_rules 中的 rule_id 是否包含 authorization 类型
+            prev_snap = conn.execute(
+                "SELECT * FROM business_rule_snapshots WHERE id < ? ORDER BY id DESC LIMIT 1",
+                (snapshot_id,),
+            ).fetchone()
+            if not prev_snap:
+                return []
+
+            # 从最近的完整快照中获取被移除规则的详情
+            try:
+                prev_added = set(json.loads(prev_snap["added_rules"]))
+            except (json.JSONDecodeError, TypeError):
+                return []
+
+            for rid in removed:
+                if rid in prev_added:
+                    # 从 business_rules 找(如果还没被删)或从快照记录中找
+                    old = conn.execute(
+                        "SELECT * FROM business_rules WHERE rule_id=?",
+                        (rid,),
+                    ).fetchone()
+                    if old and old["rule_type"] == "authorization":
+                        results.append(Conflict(
+                            conflict_type="auth_removed",
+                            severity="high",
+                            rule_a=dict(old),
+                            rule_b=None,
+                            description=(
+                                f"权限规则被移除: {rid} "
+                                f"({old['source_file']}:{old['source_line']})"
+                            ),
+                        ))
         return results

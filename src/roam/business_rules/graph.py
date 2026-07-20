@@ -86,29 +86,34 @@ class RuleGraph:
         return {"total_edges": len(edges), "by_type": by_type}
 
     def _detect_conflicts(self, rules: list[dict]) -> list[tuple[str, str, str]]:
-        """检测规则冲突"""
+        """跨类型规则冲突检测"""
         conflicts = []
-        # Group by rule_type + same field basis
-        by_type: dict[str, list[dict]] = {}
-        for r in rules:
-            rt = r.get("rule_type", "")
-            by_type.setdefault(rt, []).append(r)
 
-        # validation: same field, same operator, different threshold → conflict
-        for r in by_type.get("validation", []):
-            for r2 in by_type.get("validation", []):
-                if r["rule_id"] >= r2["rule_id"]:
-                    continue
-                try:
-                    p1 = json.loads(r["params"]) if isinstance(r["params"], str) else r["params"]
-                    p2 = json.loads(r2["params"]) if isinstance(r2["params"], str) else r2["params"]
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                f1 = p1.get("field") or p1.get("value")
-                f2 = p2.get("field") or p2.get("value")
-                if f1 and f1 == f2:
-                    conflicts.append((r["rule_id"], r2["rule_id"], "conflicts_with"))
-                    break
+        # Group rules by params field/value for cross-type comparison
+        by_field: dict[str, list[dict]] = {}
+        for r in rules:
+            try:
+                p = json.loads(r["params"]) if isinstance(r["params"], str) else r["params"]
+            except (json.JSONDecodeError, TypeError):
+                continue
+            field = (p.get("field") or p.get("value") or p.get("status_value")
+                     or p.get("exception_message"))
+            if field:
+                by_field.setdefault(str(field)[:60], []).append(r)
+
+        # Same field, different rules → potential conflict
+        for field, items in by_field.items():
+            if len(items) < 2:
+                continue
+            for i in range(len(items)):
+                for j in range(i + 1, len(items)):
+                    ri, rj = items[i], items[j]
+                    # Same field + different type → potential semantic conflict
+                    if ri["rule_type"] != rj["rule_type"]:
+                        conflicts.append((ri["rule_id"], rj["rule_id"], "conflicts_with"))
+                    # Same type but different source → duplicate or split logic
+                    elif ri["source_file"] != rj["source_file"]:
+                        conflicts.append((ri["rule_id"], rj["rule_id"], "related"))
 
         return conflicts
 

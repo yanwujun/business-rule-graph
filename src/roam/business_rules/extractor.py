@@ -143,7 +143,6 @@ class BusinessRuleExtractor:
             return rules
 
         root = tree.root_node
-        src = source  # alias
 
         # if + throw
         rules.extend(self._query_if_throw(lang, root, src, file_path, domain))
@@ -153,6 +152,8 @@ class BusinessRuleExtractor:
         rules.extend(self._query_status_enum(lang, root, src, file_path, domain))
         # standalone throw
         rules.extend(self._query_standalone_throw(lang, root, src, file_path, domain))
+        # try-catch business exception
+        rules.extend(self._query_try_catch(lang, root, src, file_path, domain))
 
         return rules
 
