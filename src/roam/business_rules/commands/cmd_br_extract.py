@@ -160,3 +160,88 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
             f"Summarized {len(enriched)} rules"
             + (f" ({len(merges)} merged)" if merges else "")
         )
+
+
+def _get_db_path():
+    try:
+        root = find_project_root()
+    except Exception:
+        root = "."
+    return f"{root}/.roam/index.db"
+
+
+@click.command("business-rules-graph")
+@click.option("--stats", is_flag=True, help="Show statistics only")
+def cmd_br_graph(stats=False):
+    """Build/rebuild business rule knowledge graph"""
+    db_path = _get_db_path()
+    graph = RuleGraph(db_path)
+    if stats:
+        s = graph.stats()
+        click.echo(f"Rules: {s['rules']}  Edges: {s['edges']}")
+    else:
+        result = graph.build()
+        click.echo(f"Graph built: {result['total_edges']} edges")
+        for et, n in sorted(result["by_type"].items()):
+            click.echo(f"  {et}: {n}")
+
+
+@click.command("business-rules-check")
+@click.option("--snapshot-id", type=int, default=None, help="Compare against snapshot")
+@click.option("--json", "as_json", is_flag=True)
+def cmd_br_check(snapshot_id=None, as_json=False):
+    """Detect business rule conflicts"""
+    db_path = _get_db_path()
+    detector = ConflictDetector(db_path)
+    conflicts = detector.detect(previous_snapshot_id=snapshot_id)
+    if as_json:
+        click.echo(json.dumps(
+            [{"type": c.conflict_type, "severity": c.severity, "description": c.description, "rule_a": c.rule_a, "rule_b": c.rule_b}
+             for c in conflicts],
+            indent=2, ensure_ascii=False,
+        ))
+    elif not conflicts:
+        click.echo("No conflicts detected.")
+    else:
+        for c in conflicts:
+            click.echo(f"[{c.severity.upper()}] {c.conflict_type}: {c.description}")
+
+
+@click.command("business-rules-diff")
+@click.option("--from", "from_id", type=int, help="From snapshot ID")
+@click.option("--to", "to_id", type=int, help="To snapshot ID (default: latest)")
+def cmd_br_diff(from_id=None, to_id=None):
+    """Diff two business rule snapshots"""
+    from roam.business_rules.snapshot import RuleSnapshot
+    db_path = _get_db_path()
+    snap = RuleSnapshot(db_path)
+    if from_id is None or to_id is None:
+        snapshots = snap.list_snapshots(limit=2)
+        if len(snapshots) < 2:
+            click.echo("Need at least 2 snapshots. Create one first.")
+            return
+        if from_id is None:
+            from_id = snapshots[1]["id"]
+        if to_id is None:
+            to_id = snapshots[0]["id"]
+    result = snap.diff(from_id, to_id)
+    if "error" in result:
+        click.echo(result["error"])
+        return
+    click.echo(f"{result['from']['label'] or result['from']['id']} → {result['to']['label'] or result['to']['id']}")
+    click.echo(f"  Rules: {result['from']['count']} → {result['to']['count']} ({result['net_change']:+d})")
+    if result["added"]:
+        click.echo(f"  Added: {len(result['added'])}")
+    if result["removed"]:
+        click.echo(f"  Removed: {len(result['removed'])}")
+
+
+@click.command("business-rules-snapshot")
+@click.option("--label", default="", help="Snapshot label")
+def cmd_br_snapshot(label=""):
+    """Create a business rule snapshot"""
+    from roam.business_rules.snapshot import RuleSnapshot
+    db_path = _get_db_path()
+    snap = RuleSnapshot(db_path)
+    sid = snap.create(label=label)
+    click.echo(f"Snapshot {sid} created" + (f": {label}" if label else ""))

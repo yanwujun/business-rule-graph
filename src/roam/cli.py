@@ -471,6 +471,9 @@ _COMMANDS = {
     "business-rules-diff": (
         "roam.business_rules.commands.cmd_br_extract", "cmd_br_diff",
     ),
+    "business-rules-snapshot": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_snapshot",
+    ),
 }
 
 # Command categories for organized --help display
