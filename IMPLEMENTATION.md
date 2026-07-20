@@ -2,7 +2,8 @@
 
 > 项目: https://github.com/yanwujun/business-rule-graph
 > 基座: roam-code v13
-> 原则: 纯 AST，零 LLM；LLM 为可选增强层
+> 原则: AST 确定性引擎 + LLM 语义引擎，双引擎驱动
+> SVN 支持: roam-code 文件 mtime 检测，不依赖 git
 
 ---
 
@@ -29,11 +30,16 @@ python -m roam version
 src/roam/business_rules/
 ├── __init__.py          # 空
 ├── models.py            # RuleType 枚举 + BusinessRule dataclass
-├── patterns.py          # ANNOTATION_RULE_MAP + AST 查询模式
-├── extractor.py         # 核心提取器
-└── commands/
-    ├── __init__.py
-    └── cmd_br_extract.py
+├── patterns.py          # 提取优先级: 流程节点 > 方法命名 > 注解
+├── extractor.py         # AST 核心提取器（确定性）
+├── summarizer.py        # LLM 语义引擎（domain/flow/description/归并）
+├── commands/
+│   ├── __init__.py
+│   ├── cmd_br_extract.py
+│   ├── cmd_br_summarize.py
+│   ├── cmd_br_graph.py
+│   ├── cmd_br_check.py
+│   └── cmd_br_diff.py
 ```
 
 ### 1.2 `models.py` — 数据模型
@@ -82,114 +88,51 @@ class BusinessRule:
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 ```
 
-### 1.3 `patterns.py` — 注解→规则映射 + tree-sitter 查询
+### 1.3 `patterns.py` — 提取优先级: 流程/判断节点 > 方法命名 > 注解
+
+> **设计原则：** 政府采购系统（直采商城/框架协议）等业务代码少用 Spring 注解，
+> 规则主体在 `if + throw`、状态判断、方法命名约定中。提取优先级：
+> **tree-sitter 流程节点 → 方法命名模式 → 注解（兜底）**
 
 ```python
 from .models import RuleType, Severity
 
 # ============================================================
-# 注解 → (规则类型, 操作符, 参数提取方式)
-# ============================================================
-ANNOTATION_RULE_MAP = {
-    # ---- validation ----
-    "NotNull":   (RuleType.VALIDATION, "required", None, Severity.MEDIUM),
-    "NotBlank":  (RuleType.VALIDATION, "required", None, Severity.MEDIUM),
-    "NotEmpty":  (RuleType.VALIDATION, "required", None, Severity.MEDIUM),
-    "Min":       (RuleType.VALIDATION, ">=", "value", Severity.MEDIUM),
-    "Max":       (RuleType.VALIDATION, "<=", "value", Severity.MEDIUM),
-    "DecimalMin":(RuleType.VALIDATION, ">=", "value", Severity.MEDIUM),
-    "DecimalMax":(RuleType.VALIDATION, "<=", "value", Severity.MEDIUM),
-    "Size":      (RuleType.VALIDATION, "size", ["min","max"], Severity.MEDIUM),
-    "Length":    (RuleType.VALIDATION, "size", ["min","max"], Severity.MEDIUM),
-    "Pattern":   (RuleType.VALIDATION, "regexp", "regexp", Severity.MEDIUM),
-    "Email":     (RuleType.VALIDATION, "email", None, Severity.MEDIUM),
-    "Positive":  (RuleType.VALIDATION, ">", "0", Severity.LOW),
-    "Negative":  (RuleType.VALIDATION, "<", "0", Severity.LOW),
-    "Valid":     (RuleType.VALIDATION, "cascade", None, Severity.MEDIUM),
-    "Validated": (RuleType.VALIDATION, "cascade", None, Severity.MEDIUM),
-
-    # ---- authorization ----
-    "PreAuthorize":    (RuleType.AUTHORIZATION, "spel", "value", Severity.HIGH),
-    "PostAuthorize":   (RuleType.AUTHORIZATION, "spel", "value", Severity.HIGH),
-    "RolesAllowed":    (RuleType.AUTHORIZATION, "roles", "value", Severity.HIGH),
-    "Secured":         (RuleType.AUTHORIZATION, "secured", "value", Severity.HIGH),
-    "PreFilter":       (RuleType.AUTHORIZATION, "filter", "value", Severity.HIGH),
-    "PostFilter":      (RuleType.AUTHORIZATION, "filter", "value", Severity.HIGH),
-    "PermitAll":       (RuleType.AUTHORIZATION, "permit_all", None, Severity.LOW),
-    "DenyAll":         (RuleType.AUTHORIZATION, "deny_all", None, Severity.CRITICAL),
-
-    # ---- data_integrity ----
-    "Column":          (RuleType.DATA_INTEGRITY, "column", None, Severity.MEDIUM),
-    "UniqueConstraint":(RuleType.DATA_INTEGRITY, "unique", None, Severity.MEDIUM),
-
-    # ---- integration ----
-    "Retryable":       (RuleType.INTEGRATION, "retry", None, Severity.MEDIUM),
-    "CircuitBreaker":  (RuleType.INTEGRATION, "circuit_breaker", None, Severity.HIGH),
-    "Bulkhead":        (RuleType.INTEGRATION, "bulkhead", None, Severity.MEDIUM),
-    "RateLimiter":     (RuleType.INTEGRATION, "rate_limit", None, Severity.MEDIUM),
-
-    # ---- configuration ----
-    "Value":           (RuleType.CONFIGURATION, "property", "value", Severity.LOW),
-    "ConfigurationProperties": (RuleType.CONFIGURATION, "prefix", "prefix", Severity.LOW),
-
-    # ---- workflow ----
-    "Transactional":   (RuleType.WORKFLOW, "transactional", None, Severity.MEDIUM),
-    "EventListener":   (RuleType.PROCESS, "event", "value", Severity.MEDIUM),
-    "Scheduled":       (RuleType.PROCESS, "scheduled", "cron", Severity.LOW),
-    "Async":           (RuleType.PROCESS, "async", None, Severity.LOW),
-}
-
-# ============================================================
-# 方法命名模式 → 规则类型
-# ============================================================
-METHOD_NAME_PATTERNS = {
-    #
-    # data_integrity
-    "existsBy":         (RuleType.DATA_INTEGRITY, "unique_check"),
-    "countBy":          (RuleType.DATA_INTEGRITY, "count_check"),
-    "findBy.*And":      (RuleType.DATA_INTEGRITY, "compound_query"),
-    #
-    # workflow
-    "setStatus":        (RuleType.WORKFLOW, "status_transition"),
-    "changeStatus":     (RuleType.WORKFLOW, "status_transition"),
-    "updateStatus":     (RuleType.WORKFLOW, "status_transition"),
-    "transitionTo":     (RuleType.WORKFLOW, "status_transition"),
-    #
-    # validation
-    "validate":         (RuleType.VALIDATION, "custom_validate"),
-    "check":            (RuleType.VALIDATION, "custom_check"),
-    "assert":           (RuleType.VALIDATION, "custom_assert"),
-    "verify":           (RuleType.VALIDATION, "custom_verify"),
-    #
-    # calculation
-    "calculate":        (RuleType.CALCULATION, "compute"),
-    "compute":          (RuleType.CALCULATION, "compute"),
-    "getDiscount":      (RuleType.CALCULATION, "discount"),
-    "getTax":           (RuleType.CALCULATION, "tax"),
-    "getCommission":    (RuleType.CALCULATION, "commission"),
-    "getFee":           (RuleType.CALCULATION, "fee"),
-}
-
-# ============================================================
-# tree-sitter AST 查询模式 — 补充注解之外的规则
+# 优先级 1: tree-sitter AST 查询 — 流程/判断节点（主力）
 # ============================================================
 TREE_SITTER_QUERIES = {
-    # if (condition) throw new XxxException — validation 规则
-    "if_throw_validation": """
+    # ——— if + throw 断言：if (条件) throw new XxxException ———
+    # 这是政府采购代码中最常见的规则载体
+    "if_throw": """
         (if_statement
-          condition: (_)
+          condition: (_) @condition
           consequence: (block
             (expression_statement
               (object_creation_expression
                 type: (type_identifier) @exception_type
                 (#match? @exception_type ".*Exception")
+                arguments: (argument_list) @exc_args
               )
             )
           )
         )
     """,
 
-    # switch (status) { case X: case Y: } — workflow 规则
+    # ——— if + status 判断：if (x.getStatus() == OrderStatus.DRAFT) ———
+    "if_status_check": """
+        (if_statement
+          condition: (binary_expression
+            left: (method_invocation
+              name: (identifier) @method_name
+              (#match? @method_name "^(get|is).*[Ss]tatus$")
+            )
+            operator: _ @operator
+            right: (_) @status_value
+          )
+        )
+    """,
+
+    # ——— switch + status 分支 ———
     "switch_on_status": """
         (switch_expression
           condition: (identifier) @switch_var
@@ -200,24 +143,150 @@ TREE_SITTER_QUERIES = {
         )
     """,
 
-    # enum XxxStatus — workflow 规则
+    # ——— enum XxxStatus 定义 ———
     "status_enum": """
         (enum_declaration
           name: (identifier) @enum_name
           (#match? @enum_name ".*[Ss]tatus$")
+        ) @enum_node
+    """,
+
+    # ——— throw 独立语句（不在 if 里）：throw new BusinessException(...) ———
+    "standalone_throw": """
+        (expression_statement
+          (object_creation_expression
+            type: (type_identifier) @exception_type
+            (#match? @exception_type ".*Exception")
+            arguments: (argument_list) @exc_args
+          )
         )
     """,
 
-    # BigDecimal operations — calculation 规则
-    "bigdecimal_ops": """
-        (method_invocation
-          object: (identifier) @var
-          name: (identifier) @method
-          (#match? @method "^(add|subtract|multiply|divide)$")
+    # ——— try-catch 业务异常包装 ———
+    "try_catch_business": """
+        (try_statement
+          body: (_)
+          catch_clause: (catch_clause
+            parameter: (catch_formal_parameter
+              type: (type_identifier) @caught_type
+              (#match? @caught_type ".*Exception")
+            )
+          )
         )
     """,
 }
 
+
+def extract_if_condition_text(node, source_bytes: bytes) -> str:
+    """从 tree-sitter if_statement 提取条件代码文本"""
+    for child in node.children:
+        if child.type == "condition":
+            if child.type == "parenthesized_expression":
+                inner = child.children[1] if len(child.children) > 1 else child
+                return inner.text.decode() if hasattr(inner, 'text') else ""
+            return source_bytes[child.start_byte:child.end_byte].decode()
+    return ""
+
+
+def extract_exception_message(node, source_bytes: bytes) -> str:
+    """从 throw new XxxException(...) 提取异常消息"""
+    text = source_bytes[node.start_byte:node.end_byte].decode()
+    # 提取第一个字符串参数作为规则描述
+    import re
+    m = re.search(r'"([^"]*)"', text)
+    return m.group(1) if m else text[:80]
+
+
+def extract_status_value(node, source_bytes: bytes) -> str:
+    """提取状态值: OrderStatus.DRAFT → DRAFT"""
+    text = source_bytes[node.start_byte:node.end_byte].decode()
+    if "." in text:
+        return text.split(".")[-1]
+    return text
+
+
+def extract_enum_values(node, source_bytes: bytes) -> list[str]:
+    """提取枚举的所有常量名"""
+    values = []
+    for child in node.children:
+        if child.type == "enum_body_declarations":
+            for sub in child.children:
+                if sub.type == "enum_constant":
+                    for c in sub.children:
+                        if c.type == "identifier":
+                            values.append(source_bytes[c.start_byte:c.end_byte].decode())
+                            break
+    return values
+
+
+# ============================================================
+# 优先级 2: 方法命名模式 → 规则类型
+# ============================================================
+METHOD_NAME_PATTERNS = {
+    # workflow — 状态流转
+    "setStatus":        (RuleType.WORKFLOW, "status_transition"),
+    "changeStatus":     (RuleType.WORKFLOW, "status_transition"),
+    "updateStatus":     (RuleType.WORKFLOW, "status_transition"),
+    "transitionTo":     (RuleType.WORKFLOW, "status_transition"),
+    # workflow — 审批链
+    "submit":           (RuleType.WORKFLOW, "submit"),
+    "approve":          (RuleType.WORKFLOW, "approve"),
+    "reject":           (RuleType.WORKFLOW, "reject"),
+    "audit":            (RuleType.WORKFLOW, "audit"),
+    "review":           (RuleType.WORKFLOW, "review"),
+    "publish":          (RuleType.WORKFLOW, "publish"),
+    # validation — 自定义校验方法
+    "validate":         (RuleType.VALIDATION, "custom_validate"),
+    "check":            (RuleType.VALIDATION, "custom_check"),
+    "assert":           (RuleType.VALIDATION, "custom_assert"),
+    "verify":           (RuleType.VALIDATION, "custom_verify"),
+    # data_integrity — 数据库查询
+    "existsBy":         (RuleType.DATA_INTEGRITY, "unique_check"),
+    "countBy":          (RuleType.DATA_INTEGRITY, "count_check"),
+    "selectBy":         (RuleType.DATA_INTEGRITY, "query"),
+    "findBy":           (RuleType.DATA_INTEGRITY, "query"),
+    # calculation
+    "calculate":        (RuleType.CALCULATION, "compute"),
+    "compute":          (RuleType.CALCULATION, "compute"),
+    "getDiscount":      (RuleType.CALCULATION, "discount"),
+    "getTax":           (RuleType.CALCULATION, "tax"),
+    "getPrice":         (RuleType.CALCULATION, "price"),
+    "getTotal":         (RuleType.CALCULATION, "total"),
+    "getAmount":        (RuleType.CALCULATION, "amount"),
+    # process — 事件/定时
+    "on":               (RuleType.PROCESS, "event_handler"),
+    "handle":           (RuleType.PROCESS, "event_handler"),
+    "sync":             (RuleType.PROCESS, "sync"),
+    "push":             (RuleType.PROCESS, "push"),
+}
+
+# ============================================================
+# 优先级 3: 注解 → 规则类型（兜底，少数有注解的情况）
+# ============================================================
+ANNOTATION_RULE_MAP = {
+    # validation
+    "NotNull":   (RuleType.VALIDATION, "required"),
+    "NotBlank":  (RuleType.VALIDATION, "required"),
+    "NotEmpty":  (RuleType.VALIDATION, "required"),
+    "Min":       (RuleType.VALIDATION, ">="),
+    "Max":       (RuleType.VALIDATION, "<="),
+    "Valid":     (RuleType.VALIDATION, "cascade"),
+    # authorization
+    "PreAuthorize":    (RuleType.AUTHORIZATION, "spel"),
+    "RolesAllowed":    (RuleType.AUTHORIZATION, "roles"),
+    # integration
+    "Retryable":       (RuleType.INTEGRATION, "retry"),
+    "CircuitBreaker":  (RuleType.INTEGRATION, "circuit_breaker"),
+    # configuration
+    "Value":           (RuleType.CONFIGURATION, "property"),
+    # workflow
+    "Transactional":   (RuleType.WORKFLOW, "transactional"),
+    "EventListener":   (RuleType.PROCESS, "event"),
+}
+
+# ============================================================
+# 辅助函数
+# ============================================================
 
 def domain_from_package(package: str) -> str:
     """从 Java 包名推断业务域"""
@@ -237,7 +306,6 @@ def domain_from_package(package: str) -> str:
         "report": "报表管理", "statistics": "统计分析",
         "message": "消息管理", "notification": "通知管理",
         "system": "系统管理", "admin": "管理后台",
-        "config": "配置管理", "setting": "系统设置",
     }
     for key, name in domain_map.items():
         if key in parts:
@@ -268,13 +336,18 @@ def flow_from_class(class_name: str) -> str:
     return class_name
 ```
 
-### 1.4 `extractor.py` — 核心提取器
+### 1.4 `extractor.py` — 核心提取器（流程/判断节点优先）
 
 ```python
-"""纯 AST 业务规则提取器 — 零 LLM 依赖"""
+"""纯 AST 业务规则提取器 — 零 LLM 依赖
+优先级: if-throw/status判断 → 方法命名 → 注解（兜底）
+文件变更检测: roam-code 文件 mtime + hash（支持 SVN）
+"""
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -283,167 +356,407 @@ from .models import BusinessRule, RuleType
 from .patterns import (
     ANNOTATION_RULE_MAP,
     METHOD_NAME_PATTERNS,
+    TREE_SITTER_QUERIES,
     domain_from_package,
     flow_from_class,
+    extract_if_condition_text,
+    extract_exception_message,
+    extract_status_value,
+    extract_enum_values,
 )
 
 logger = logging.getLogger(__name__)
 
+try:
+    from tree_sitter import Language, Parser, Query
+    HAS_TREE_SITTER = True
+except ImportError:
+    HAS_TREE_SITTER = False
+
 
 class BusinessRuleExtractor:
-    """从 roam-code index 提取业务规则"""
+    """从 roam-code index 提取业务规则 — 文件时间戳检测，不依赖 git"""
 
-    def __init__(self, db_path: Path | str):
+    def __init__(self, db_path: Path | str, project_root: Path | str = "."):
         self.db_path = str(db_path)
+        self.project_root = Path(project_root)
 
-    def extract(self) -> list[BusinessRule]:
-        """主入口：扫描 index.db 中所有 Java symbols，提取业务规则"""
+    def extract(self, incremental: bool = False) -> list[BusinessRule]:
+        """主入口"""
         rules: list[BusinessRule] = []
-        seen = set()  # 去重用
+        seen = set()
 
+        files_to_scan = self._get_files(incremental)
+
+        for file_rel in files_to_scan:
+            file_abs = self.project_root / file_rel
+            if not file_abs.exists():
+                continue
+            try:
+                source_bytes = file_abs.read_bytes()
+            except Exception:
+                continue
+
+            file_rules = self._extract_from_source(
+                source_bytes, str(file_rel)
+            )
+            for rule in file_rules:
+                h = rule.compute_hash()
+                if h not in seen:
+                    seen.add(h)
+                    rules.append(rule)
+
+        logger.info(f"Extracted {len(rules)} business rules from {len(files_to_scan)} files")
+        return rules
+
+    def _get_files(self, incremental: bool) -> list[str]:
+        """获取需要扫描的 Java 文件列表（支持 SVN）"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
 
-            # 查询所有 Java 方法/类
-            rows = conn.execute("""
-                SELECT s.id, s.name, s.kind, s.signature, s.decorators,
-                       s.line_start, s.line_end, s.qualified_name,
-                       f.path as file_path
-                FROM symbols s
-                JOIN files f ON s.file_id = f.id
-                WHERE f.language = 'java'
-                  AND s.kind IN ('method', 'class', 'enum')
-                ORDER BY f.path, s.line_start
-            """).fetchall()
+            if incremental:
+                # 基于文件 mtime 检测变更（不依赖 git/svn）
+                rows = conn.execute("""
+                    SELECT f.path, f.mtime, f.hash
+                    FROM files f
+                    WHERE f.language = 'java'
+                """).fetchall()
+                changed = []
+                for r in rows:
+                    fp = self.project_root / r["path"]
+                    if fp.exists():
+                        import hashlib
+                        new_mtime = fp.stat().st_mtime
+                        if new_mtime != r["mtime"]:
+                            changed.append(r["path"])
+                return changed
+            else:
+                rows = conn.execute("""
+                    SELECT path FROM files WHERE language = 'java'
+                """).fetchall()
+                return [r["path"] for r in rows]
 
-        for row in rows:
-            extracted = self._extract_from_symbol(dict(row))
-            for rule in extracted:
-                rule_hash = rule.compute_hash()
-                if rule_hash not in seen:
-                    seen.add(rule_hash)
-                    rules.append(rule)
-
-        logger.info(f"Extracted {len(rules)} business rules")
-        return rules
-
-    def _extract_from_symbol(self, sym: dict) -> list[BusinessRule]:
-        """从单个 symbol 提取所有规则"""
+    def _extract_from_source(self, source: bytes, file_path: str) -> list[BusinessRule]:
+        """从 Java 源文件提取业务规则 — 三级优先级"""
         rules = []
-        name = sym["name"]
-        file_path = sym["file_path"]
-        decorators = (sym.get("decorators") or "").split(",")
-        qname = sym.get("qualified_name") or name
-        line = sym.get("line_start", 0)
 
-        # 从包名和类名推断 domain/flow
         package = Path(file_path).parent.as_posix().replace("/", ".")
         domain = domain_from_package(package)
-        flow = flow_from_class(name)
 
-        # 1) 扫描注解
-        for deco in decorators:
-            deco = deco.strip()
-            if not deco:
-                continue
-            # 提取注解名和参数: @Min(100) → "Min", "100"
-            anno_name, anno_args = self._parse_annotation(deco)
-            if anno_name in ANNOTATION_RULE_MAP:
-                rt, op, param_key, severity = ANNOTATION_RULE_MAP[anno_name]
-                params = self._build_params(op, param_key, anno_args)
-                rule = BusinessRule(
-                    rule_id=f"{name}.{deco}",
-                    rule_type=rt,
+        # === 优先级 1: tree-sitter 流程/判断节点（主力） ===
+        if HAS_TREE_SITTER:
+            rules.extend(self._extract_tree_sitter(source, file_path, domain))
+
+        # === 优先级 2: 方法命名模式 ===
+        rules.extend(self._extract_method_names(source, file_path, domain))
+
+        # === 优先级 3: 注解（兜底） ===
+        rules.extend(self._extract_annotations(source, file_path, domain))
+
+        return rules
+
+    def _extract_tree_sitter(self, source: bytes, file_path: str, domain: str) -> list[BusinessRule]:
+        """使用 tree-sitter 扫描 if-throw / status 判断 / enum 等"""
+        rules = []
+        try:
+            import tree_sitter_java as tsjava
+            JAVA_LANG = Language(tsjava.language())
+            parser = Parser(JAVA_LANG)
+            tree = parser.parse(source)
+        except Exception:
+            return rules
+
+        root = tree.root_node
+
+        # if + throw
+        try:
+            query = Query(JAVA_LANG, TREE_SITTER_QUERIES["if_throw"])
+            captures = query.captures(root)
+            for node, _ in captures:
+                cond_text = extract_if_condition_text(node, source)
+                exc_msg = extract_exception_message(node, source)
+                line = node.start_point[0] + 1
+                rules.append(BusinessRule(
+                    rule_id=f"{file_path}:{line}:if-throw",
+                    rule_type=RuleType.VALIDATION,
                     domain=domain,
-                    flow=flow,
-                    description=self._describe(rt, op, params),
-                    severity=severity,
+                    description=exc_msg or f"条件断言: {cond_text}",
+                    severity="medium",
                     source_file=file_path,
                     source_line=line,
-                    source_symbol=name,
-                    params=params,
-                    annotations=[deco],
-                    symbols=[sym["id"]],
-                )
-                rules.append(rule)
+                    source_symbol="",
+                    params={
+                        "condition": cond_text,
+                        "exception_message": exc_msg,
+                        "extraction": "tree_sitter_if_throw",
+                    },
+                ))
+        except Exception:
+            pass
 
-        # 2) 扫描方法命名模式
-        for pattern, (rt, sub_type) in METHOD_NAME_PATTERNS.items():
-            import re
-            if re.match(pattern, name):
-                params = {"method": name, "sub_type": sub_type}
-                # 避免与注解规则重复
-                if not any(r.rule_id.startswith(name) for r in rules):
-                    rule = BusinessRule(
+        # if + status 判断
+        try:
+            query = Query(JAVA_LANG, TREE_SITTER_QUERIES["if_status_check"])
+            captures = query.captures(root)
+            for node, _ in captures:
+                status_val = extract_status_value(node, source)
+                line = node.start_point[0] + 1
+                rules.append(BusinessRule(
+                    rule_id=f"{file_path}:{line}:status-check",
+                    rule_type=RuleType.WORKFLOW,
+                    domain=domain,
+                    description=f"状态判断: {status_val}",
+                    source_file=file_path,
+                    source_line=line,
+                    source_symbol="",
+                    params={
+                        "status_value": status_val,
+                        "extraction": "tree_sitter_status_check",
+                    },
+                ))
+        except Exception:
+            pass
+
+        # enum XxxStatus
+        try:
+            query = Query(JAVA_LANG, TREE_SITTER_QUERIES["status_enum"])
+            captures = query.captures(root)
+            for node, _ in captures:
+                enum_vals = extract_enum_values(node, source)
+                line = node.start_point[0] + 1
+                rules.append(BusinessRule(
+                    rule_id=f"{file_path}:{line}:status-enum",
+                    rule_type=RuleType.WORKFLOW,
+                    domain=domain,
+                    description=f"状态枚举: {', '.join(enum_vals)}",
+                    source_file=file_path,
+                    source_line=line,
+                    source_symbol="",
+                    params={
+                        "enum_values": enum_vals,
+                        "extraction": "tree_sitter_status_enum",
+                    },
+                ))
+        except Exception:
+            pass
+
+        return rules
+
+    def _extract_method_names(self, source: bytes, file_path: str, domain: str) -> list[BusinessRule]:
+        """基于方法命名约定提取"""
+        rules = []
+        text = source.decode(errors="replace")
+        # Java 方法定义: public/private/protected 返回类型 方法名(
+        for m in re.finditer(
+            r'(?:public|private|protected)\s+\w+\s+(\w+)\s*\(', text
+        ):
+            name = m.group(1)
+            for pattern, (rt, sub_type) in METHOD_NAME_PATTERNS.items():
+                if re.match(f"^{pattern}", name):
+                    line = text[:m.start()].count('\n') + 1
+                    rules.append(BusinessRule(
                         rule_id=f"{name}.{pattern}",
                         rule_type=rt,
                         domain=domain,
-                        flow=flow,
+                        flow=flow_from_class(name),
                         description=f"{sub_type}: {name}",
                         source_file=file_path,
                         source_line=line,
                         source_symbol=name,
-                        params=params,
-                        symbols=[sym["id"]],
-                    )
-                    rules.append(rule)
-
-        # 3) 枚举类型检测 (status enum)
-        if sym.get("kind") == "enum" and "status" in name.lower():
-            rule = BusinessRule(
-                rule_id=f"{name}.status_enum",
-                rule_type=RuleType.WORKFLOW,
-                domain=domain,
-                flow=flow,
-                description=f"状态枚举: {name}",
-                severity="medium",
-                source_file=file_path,
-                source_line=line,
-                source_symbol=name,
-                params={"enum_name": name},
-                symbols=[sym["id"]],
-            )
-            rules.append(rule)
-
+                        params={"method": name, "sub_type": sub_type,
+                                "extraction": "method_name"},
+                    ))
+                    break
         return rules
 
-    def _parse_annotation(self, anno_text: str) -> tuple[str, Optional[str]]:
-        """解析注解文本: @Min(100) → ("Min", "100"), @NotNull → ("NotNull", None)"""
-        text = anno_text.lstrip("@")
-        if "(" in text:
-            idx = text.index("(")
-            name = text[:idx]
-            args = text[idx+1:].rstrip(")")
-            return name, args
-        return text, None
+    def _extract_annotations(self, source: bytes, file_path: str, domain: str) -> list[BusinessRule]:
+        """注解提取（兜底）"""
+        rules = []
+        text = source.decode(errors="replace")
+        for m in re.finditer(r'@(\w+)(?:\(([^)]*)\))?', text):
+            name = m.group(1)
+            args = m.group(2)
+            if name in ANNOTATION_RULE_MAP:
+                rt, op = ANNOTATION_RULE_MAP[name]
+                line = text[:m.start()].count('\n') + 1
+                rules.append(BusinessRule(
+                    rule_id=f"{file_path}:{line}:@{name}",
+                    rule_type=rt,
+                    domain=domain,
+                    description=f"@{name}: {args or op}",
+                    source_file=file_path,
+                    source_line=line,
+                    source_symbol="",
+                    params={"operator": op, "args": args or "",
+                            "extraction": "annotation"},
+                    annotations=[f"@{name}" + (f"({args})" if args else "")],
+                ))
+        return rules
+```
 
-    def _build_params(self, op: str, param_key, args: Optional[str]) -> dict:
-        """构建规则参数"""
-        params = {"operator": op}
-        if args:
-            if param_key:
-                if isinstance(param_key, list):
-                    # @Size(min=1, max=100)
-                    for pk in param_key:
-                        if pk in args:
-                            params[pk] = args
-                else:
-                    params[param_key] = args
+### 1.4.1 SVN / 无 VCS 支持说明
+
+roam-code 的文件变更检测不依赖 git：
+
+```
+roam init               → 全量扫描，记录每个文件的 mtime + hash
+roam extract --update   → 比较当前文件 mtime 与 index 中记录，只处理变更文件
+roam snapshot --label   → 快照用自定义标签，不绑定 git commit
+```
+
+SVN 项目直接可用。唯一差距是快照的 `git_commit` 字段为空 — 用 `label` 字段替代。
+
+### 1.4.2 `summarizer.py` — LLM 语义引擎（内置，非可选）
+
+> AST 拿到的是代码事实（`if(total<100) throw`），变不成业务语言（"订单金额不低于100元"）。
+> `summarizer` 在 AST 提取之后，调用一次 LLM 做批量语义化。
+
+```python
+"""LLM 语义引擎 — 给 AST 规则补充业务含义
+职责:
+  ✅ domain 语义校准（不靠包名猜）
+  ✅ flow 语义校准（不靠类名猜）
+  ✅ description 自然语言生成
+  ✅ 语义归并（同规则不同写法 → 合并）
+  ✅ 冲突描述生成（不只是"阈值不一致"，而是业务含义）
+❌ 不提取参数 — 参数由 AST 确定
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Optional
+
+
+SYSTEM_PROMPT = """你是政府采购系统的业务分析师。你会收到一批从 Java 代码中自动提取的业务规则。
+你的任务是对每条规则补充业务含义。
+
+输入格式: JSON 数组，每条规则包含:
+- rule_id: 规则唯一标识
+- source_file/source_line: 代码位置
+- condition: AST 提取的条件代码文本
+- exception_message: 异常消息（如有）
+- status_value: 状态值（如有）
+- enum_values: 枚举值列表（如有）
+- extraction: 提取方式 (tree_sitter_if_throw / tree_sitter_status_check / tree_sitter_status_enum / method_name / annotation)
+
+输出要求: 对每条规则输出:
+- domain: 业务域（订单管理/供应商管理/商品管理/支付管理/审核管理/合同管理/系统管理）
+- flow: 业务流程（下单/支付/审核/发货/签约/退款/同步）
+- description: 自然语言描述（30字以内）
+- severity: critical/high/medium/low
+- merge_with: 如果与其他规则是同一规则的不同写法，填写被合并的 rule_id
+
+关键:
+- description 必须用业务语言，不要复制代码
+- domain 根据业务含义分类，不要依赖包名
+- 发现 if(total>=100) 和 if(amount<100则抛异常) 应标记为同一规则（merge_with）
+- 不要修改 rule_id / source_file / source_line
+"""
+
+
+class RuleSummarizer:
+    """批量 LLM 语义化 — 一次调用处理所有规则"""
+
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    def summarize(self, rules: list[dict], batch_size: int = 50) -> list[dict]:
+        """批量语义化，每批最多 50 条（控制 token）"""
+        if not self.api_key:
+            # 无 API key 时降级为模板生成
+            return self._template_fallback(rules)
+
+        all_results = []
+        for i in range(0, len(rules), batch_size):
+            batch = rules[i:i+batch_size]
+            result = self._call_llm(batch)
+            all_results.extend(result)
+        return all_results
+
+    def _call_llm(self, rules: list[dict]) -> list[dict]:
+        """调用 LLM API"""
+        import requests
+
+        rules_json = json.dumps(rules, ensure_ascii=False, indent=2)
+
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.environ.get("LLM_MODEL", "gpt-4.1-mini"),
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"请分析以下业务规则并补充语义信息:\n{rules_json}"},
+                ],
+                "response_format": {"type": "json_object"},
+            },
+            timeout=120,
+        )
+
+        if resp.status_code != 200:
+            return self._template_fallback(rules)
+
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        try:
+            return json.loads(content).get("rules", [])
+        except json.JSONDecodeError:
+            return self._template_fallback(rules)
+
+    def _template_fallback(self, rules: list[dict]) -> list[dict]:
+        """无 LLM 时的模板降级方案"""
+        for r in rules:
+            r["domain"] = r.get("domain", "未分类")
+            r["flow"] = r.get("flow", "")
+            exc_msg = r.get("exception_message", "")
+            cond = r.get("condition", "")
+            status = r.get("status_value", "")
+            if exc_msg:
+                r["description"] = exc_msg
+            elif status:
+                r["description"] = f"状态必须为: {status}"
+            elif cond:
+                r["description"] = f"条件校验: {cond}"
             else:
-                params["value"] = args
-        return params
+                r["description"] = r.get("description", "")
+            r["severity"] = r.get("severity", "medium")
+            r["merge_with"] = None
+        return rules
+```
 
-    def _describe(self, rt: RuleType, op: str, params: dict) -> str:
-        """模板化描述"""
-        field = params.get("field", params.get("value", "?"))
-        templates = {
-            "required": f"字段不能为空",
-            ">=": f"值必须 >= {field}",
-            "<=": f"值必须 <= {field}",
-            "email": "必须为邮箱格式",
-            "regexp": f"必须匹配: {field}",
-        }
-        return templates.get(op, f"{rt.value}: {params}")
+### 1.4.3 双引擎工作流程图
+
+```
+roam business-rules extract
+        │
+        ▼
+    extractor.py (AST 确定性引擎)
+        │
+        ├── tree-sitter 扫 if-throw
+        ├── 方法名正则匹配
+        └── 注解兜底
+        │
+        ▼  产出: [{"rule_id":"...","condition":"total<100","exception_message":"金额不能低于100元"},...]
+        │         参数精确，描述机械，domain 靠包名猜
+        │
+        ▼
+roam business-rules summarize      ← 可选但推荐
+        │
+        ▼
+    summarizer.py (LLM 语义引擎)
+        │
+        ├── domain: "订单管理" (不靠包名)
+        ├── flow: "用户下单校验"
+        ├── description: "订单金额不得低于100元"
+        ├── 语义归并: total>=100 和 amount<100→抛异常 → 合并为一条
+        └── 冲突描述: "下单校验50元但支付仍要求100元"
+        │
+        ▼  产出: 规则图谱 → conflict.py → 冲突报告
 ```
 
 ### 1.5 DB schema 扩展
