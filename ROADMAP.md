@@ -1,16 +1,27 @@
 ---
 name: business-rule-graph
-description: 基于 roam-code 改造 — 从 Java/Spring Boot 代码中提取业务规则，构建规则知识图谱，代码变更后自动检测业务冲突。
+description: 基于 roam-code 改造 — 从 Java/Spring Boot 代码中提取业务规则，构建规则知识图谱，代码变更后自动检测业务冲突。纯 AST 驱动，零 LLM 依赖（LLM 为可选增强层）。
 ---
 
 # Business Rule Graph — 改造方案
 
 ## 项目定位
 
-基于 [roam-code](https://github.com/Cranot/roam-code)（本地代码智能 CLI，SQLite 图存储，28 语言支持）改造，
-专注解决一个核心问题：
+基于 [roam-code](https://github.com/Cranot/roam-code) 改造，吸收 understand-anything 中业务规则相关能力，专注解决：
 
-> **AI 修改代码后，自动判断是否引入了业务规则冲突。**
+> **AI 修改代码后，自动判断是否引入了业务规则冲突。纯 AST，零 LLM。**
+
+## understand-anything → 本项目 吸收映射
+
+| understand-anything 能力 | 吸收方式 | 说明 |
+|---|---|---|
+| `diff-to-business-rules` 的 8 种规则分类 | → `business_rules/patterns.py` | 直接用，架构不依赖 LLM |
+| `diff-to-business-rules` 的规则提取逻辑 | → `business_rules/extractor.py` | 改为纯 AST，不依赖 diff |
+| `understand-domain` 的域/流程概念 | → `business_rules/models.py` 的 domain/flow 字段 | 从包名/类名推断 |
+| `understand` 的 knowledge-graph.json | → **废弃**。roam-code SQLite 替代 | 更精确、可增量 |
+| LLM 提取 pipeline | → **降级为可选增强层** | AST 覆盖 80%+ |
+
+**understand-anything 相关 skill 后续标记为 deprecated。**
 
 ## roam-code 已有的能力（直接复用）
 
@@ -35,14 +46,15 @@ roam-code (现有)
 │   ├── index/                     ← 已有，复用索引管线
 │   ├── evidence/                  ← 已有，复用变更追踪
 │   │
-│   └── business_rules/           ← 🆕 新增模块
+│   └── business_rules/           ← 🆕 新增模块（纯 AST，零 LLM）
 │       ├── __init__.py
-│       ├── extractor.py           # Phase 1: 规则提取器
-│       ├── patterns.py            # AST 匹配模式定义
-│       ├── models.py              # 规则数据模型
-│       ├── graph.py               # Phase 2: 规则图谱
-│       ├── conflict.py            # Phase 3: 冲突检测
-│       ├── snapshot.py            # 规则版本快照
+│       ├── models.py              # 数据模型 + 8 种规则类型定义
+│       ├── patterns.py            # AST 匹配模式（吸收 diff-to-business-rules）
+│       ├── extractor.py           # 规则提取器（纯 tree-sitter AST）
+│       ├── graph.py               # 规则图谱（规则→代码溯源 + 规则→规则关系）
+│       ├── conflict.py            # 冲突检测引擎（纯计算，零 LLM）
+│       ├── snapshot.py            # 规则版本快照 + diff
+│       ├── describe.py            # [可选] LLM 增强：中文描述 + 域分类
 │       └── commands/              # CLI 命令
 │           ├── cmd_br_extract.py
 │           ├── cmd_br_graph.py
@@ -52,52 +64,114 @@ roam-code (现有)
 
 ---
 
-## Phase 1: 业务规则提取器
+## 核心原则：纯 AST，零 LLM
+
+### AST 直接提取 vs 需要 LLM
+
+| 规则信息 | AST 能做到 | 来源 |
+|----------|-----------|------|
+| rule_id | ✅ 自动生成: `{file}-{method}-{annotation}` | 文件路径 + 符号名 + 注解名 |
+| rule_type | ✅ 注解名映射: `@Min` → validation, `@PreAuthorize` → authorization | patterns.py 映射表 |
+| source_file | ✅ 文件路径 | tree-sitter file_path |
+| source_line | ✅ 行号 | tree-sitter node.start_point |
+| source_symbol | ✅ 方法名/类名 | JavaExtractor.extract_symbols() |
+| field (约束的字段) | ✅ 从注解所在位置推断 | tree-sitter AST 父子节点 |
+| operator | ✅ `@Min` → ≥, `@Max` → ≤, `@NotNull` → required | 硬编码映射 |
+| threshold | ✅ `@Min(100)` → 100 | 注解参数 |
+| annotations | ✅ 完整列表 | modifiers → annotations |
+| domain (业务域) | ⚠️ 从包名推断: `order` → 订单管理 | 推测，可能不准 |
+| flow (业务流程) | ⚠️ 从类名推断: `OrderService` → 下单流程 | 推测，可能不准 |
+| description (中文描述) | ⚠️ 模板生成: "`{field}` 必须 ≥ `{threshold}`" | 机械化，不自然 |
+| 语义归并 | ❌ | 多处表达同一规则时需要 LLM |
+
+**结论：核心链路（提取→图谱→冲突检测）100% AST 可完成。domain/flow/description 用模板兜底，LLM 仅在需要高质量中文输出时可选启用。**
+
+---
+
+## Phase 1: 业务规则提取器（纯 AST）
 
 ### 1.1 数据模型 (`models.py`)
 
 ```python
+class RuleType(Enum):
+    """8 种规则类型 — 吸收自 diff-to-business-rules"""
+    VALIDATION = "validation"         # @NotNull, @Min, @Max, if-throw
+    AUTHORIZATION = "authorization"   # @PreAuthorize, @RolesAllowed
+    WORKFLOW = "workflow"             # enum Status, setStatus(), @Transactional
+    CALCULATION = "calculation"       # BigDecimal 运算, 折扣/税费
+    DATA_INTEGRITY = "data_integrity" # @Column(unique=true), existsBy
+    PROCESS = "process"               # @EventListener, 审批链
+    CONFIGURATION = "configuration"   # @Value, @ConfigurationProperties
+    INTEGRATION = "integration"       # @Retryable, @CircuitBreaker
+
 @dataclass
 class BusinessRule:
-    rule_id: str          # "order-minimum-amount"
-    rule_type: RuleType   # validation | authorization | workflow | calculation
-    domain: str           # "订单管理"
-    flow: str             # "用户下单流程"  
-    description: str      # "订单金额必须 ≥ ¥100"
-    severity: str         # critical | high | medium | low
-    source_file: str      # "src/.../OrderService.java"
-    source_line: int      # 145
-    source_symbol: str    # "validateOrder"
-    params: dict          # {"field": "total", "operator": ">=", "threshold": 100}
-    annotations: list     # ["@NotNull", "@Min(100)"]
-    related_symbols: list # ["Order.total", "BusinessException"]
+    rule_id: str          # "OrderService.validateOrder.@Min.total"
+    rule_type: RuleType
+    domain: str           # 从包名推断: "订单管理"
+    flow: str             # 从类名推断: "用户下单"
+    description: str      # 模板生成: "total 字段必须 >= 100"
+    severity: str         # 注解推断: @Min→medium, @PreAuthorize→high
+    source_file: str
+    source_line: int
+    source_symbol: str
+    params: dict          # {"field":"total","operator":">=","threshold":100}
+    annotations: list     # ["@Min(100)"]
+    related_symbols: list # AST 提取的关联符号
 ```
 
-### 1.2 Java AST 规则匹配模式 (`patterns.py`)
+### 1.2 注解→规则映射表 (`patterns.py`)
 
-基于 roam-code 已有的 `JavaExtractor` (tree-sitter)，新增规则识别模式：
+```python
+# 吸收自 diff-to-business-rules 的 8 种模式定义
+ANNOTATION_RULE_MAP = {
+    # validation
+    "NotNull":  (RuleType.VALIDATION, "required", None),
+    "NotBlank": (RuleType.VALIDATION, "required", None),
+    "NotEmpty": (RuleType.VALIDATION, "required", None),
+    "Min":      (RuleType.VALIDATION, ">=", "value"),
+    "Max":      (RuleType.VALIDATION, "<=", "value"),
+    "Size":     (RuleType.VALIDATION, "size", ["min","max"]),
+    "Pattern":  (RuleType.VALIDATION, "regexp", "regexp"),
+    "Email":    (RuleType.VALIDATION, "email", None),
+    "Valid":    (RuleType.VALIDATION, "cascade", None),
 
-| 模式 | AST 特征 | 规则类型 |
-|------|----------|----------|
-| 校验注解 | `@NotNull`, `@Min`, `@Max`, `@Size`, `@Pattern`, `@Valid` | validation |
-| 断言异常 | `if (condition) throw new BusinessException(msg)` | validation |
-| 权限检查 | `@PreAuthorize`, `@RolesAllowed`, `hasRole(...)` | authorization |
-| 状态枚举 | `enum *Status { ... }` + `setStatus()` 方法 | workflow |
-| 金额计算 | Service 层带有 `BigDecimal` 运算的方法 | calculation |
-| 唯一性校验 | `existsBy*()`, `findBy*() != null` 模式 | data_integrity |
-| 配置开关 | `@Value("${...}")` 控制行为分支 | configuration |
-| 外部调用 | `@Retryable`, `@CircuitBreaker`, `RestTemplate` | integration |
+    # authorization
+    "PreAuthorize":   (RuleType.AUTHORIZATION, "has_role", "value"),
+    "RolesAllowed":   (RuleType.AUTHORIZATION, "roles", "value"),
+    "Secured":        (RuleType.AUTHORIZATION, "secured", "value"),
+
+    # data_integrity
+    "Column":         (RuleType.DATA_INTEGRITY, "column", None),  # 需解析 unique/nullable
+
+    # integration
+    "Retryable":      (RuleType.INTEGRATION, "retry", None),
+    "CircuitBreaker": (RuleType.INTEGRATION, "circuit_breaker", None),
+
+    # configuration
+    "Value":          (RuleType.CONFIGURATION, "property", "value"),
+
+    # workflow
+    "Transactional":  (RuleType.WORKFLOW, "transactional", None),
+}
+```
 
 ### 1.3 提取流程 (`extractor.py`)
 
 ```
-1. 复用 roam-code indexer 扫描所有 .java 文件
-2. 对每个文件调用 JavaExtractor.extract_symbols() 获取符号
-3. 对每个 symbol 的 AST 子树：
-   a. 遍历 annotations → 匹配校验规则
-   b. 遍历 if-throw 模式 → 匹配断言规则
-   c. 遍历方法体 → 匹配计算规则
-4. 存储到 SQLite 新表 business_rules
+输入: roam-code index 后的 .roam/index.db
+输出: business_rules 表 + business_rule_code_edges 表
+
+流程:
+1. 遍历 symbols 表中 kind IN ('method','class) 的行
+2. 按 file_id 加载 AST 树（通过 tree-sitter 重新解析源文件）
+3. 对每个 symbol:
+   a. 遍历 modifiers → annotations → 匹配 ANNOTATION_RULE_MAP
+   b. 遍历方法体 if-throw → 匹配 BusinessException 模式
+   c. 扫描方法签名 → 匹配 existsBy*/findBy* 模式
+   d. 扫描类定义 → 匹配 enum *Status 模式
+4. 生成 BusinessRule 对象 → 写入 business_rules 表
+5. 生成 business_rule_code_edges → 关联到 symbols 表
 ```
 
 ---
@@ -107,96 +181,98 @@ class BusinessRule:
 ### 2.1 新增 DB 表 (`db/schema.py` 扩展)
 
 ```sql
--- 业务规则表
+-- 业务规则主表
 CREATE TABLE IF NOT EXISTS business_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_id TEXT NOT NULL UNIQUE,
-    rule_type TEXT NOT NULL,        -- validation/authorization/workflow/calculation/...
-    domain TEXT NOT NULL,           -- 业务域
-    flow TEXT,                      -- 业务流程
-    description TEXT NOT NULL,
-    severity TEXT DEFAULT 'medium', -- critical/high/medium/low
+    rule_type TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
+    flow TEXT DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    severity TEXT DEFAULT 'medium',
     source_file TEXT NOT NULL,
     source_line INTEGER,
     source_symbol TEXT,
-    params JSON,                    -- {"field":"total","operator":">=","threshold":100}
-    annotations JSON,               -- ["@NotNull","@Min(100)"]
+    params JSON,
+    annotations JSON,
+    hash TEXT,                 -- params + source 的 SHA256，用于 diff
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 规则-代码关联边
+-- 规则↔代码符号关联
 CREATE TABLE IF NOT EXISTS business_rule_code_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_id INTEGER REFERENCES business_rules(id),
-    symbol_id INTEGER REFERENCES symbols(id),   -- roam-code symbols 表
-    edge_type TEXT NOT NULL,                     -- implemented_by / constrains / references
-    file_id INTEGER REFERENCES files(id)
+    symbol_id INTEGER REFERENCES symbols(id),
+    edge_type TEXT NOT NULL   -- implemented_by / constrains / references
 );
 
--- 规则-规则关联边
+-- 规则↔规则关联（纯计算得出）
 CREATE TABLE IF NOT EXISTS business_rule_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_rule_id INTEGER REFERENCES business_rules(id),
     target_rule_id INTEGER REFERENCES business_rules(id),
-    edge_type TEXT NOT NULL,        -- related / conflicts_with / depends_on / supersedes
-    confidence REAL DEFAULT 0.5
+    edge_type TEXT NOT NULL,  -- same_field / same_flow / conflicts_with / depends_on
+    confidence REAL DEFAULT 1.0
 );
 
--- 规则版本快照
+-- 规则快照（用于 diff）
 CREATE TABLE IF NOT EXISTS business_rule_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    git_commit TEXT,
+    label TEXT,               -- 可选标签: "基线 v1", "PR #42 合并后"
     snapshot_at TEXT DEFAULT (datetime('now')),
     rule_count INTEGER,
-    changed_rules JSON             -- [{"rule_id":"...","change_type":"added|modified|removed"}]
+    added_rules JSON,         -- [rule_id, ...]
+    removed_rules JSON,
+    modified_rules JSON
 );
 ```
 
 ### 2.2 图谱构建 (`graph.py`)
 
 ```
-输入: business_rules 表 + roam-code symbols/edges 表
-输出: 双层知识图谱
-
-Layer 1 — 规则→代码溯源
-    business_rule:order-minimum-amount
+Layer 1 — 规则→代码溯源（自动生成）
+    business_rule:OrderService.validateOrder.@Min.total
         ├── [implemented_by] → symbol:OrderService.validateOrder
-        ├── [constrains] → symbol:Order.total
-        └── [in_file] → file:OrderService.java
+        ├── [constrains]     → symbol:Order.total
+        └── [in_file]        → file:OrderService.java
 
-Layer 2 — 规则→规则关系
-    business_rule:order-minimum-amount
-        ├── [same_field_as] → business_rule:payment-minimum-amount
-        ├── [same_flow] → business_rule:order-status-transition
-        └── [conflicts_with] → business_rule:payment-minimum-amount
+Layer 2 — 规则→规则关系（纯计算，零 LLM）
+    触发条件:
+    - same_field: params["field"] 相同 → 自动建边
+    - same_flow: flow 字段相同 → 自动建边
+    - conflicts_with: 同 field + 不同 threshold → 自动标记
 ```
 
 ---
 
-## Phase 3: 冲突检测引擎
+## Phase 3: 冲突检测引擎（纯计算）
 
-### 3.1 检测规则 (`conflict.py`)
+### 3.1 检测算法 (`conflict.py`)
 
-| 检测类型 | 触发条件 | 严重度 | 示例 |
-|----------|----------|--------|------|
-| **阈值不一致** | 同一字段在不同 Service 中被不同阈值校验 | CRITICAL | OrderService: total≥50, PaymentService: total≥100 |
-| **状态机断裂** | 流程链中某一环节的允许状态与上下游不匹配 | CRITICAL | A→B→C 中 B 删除了，但 C 还在检查 B |
-| **权限泄露** | 新代码移除了原本存在的权限注解 | HIGH | 删除了 @PreAuthorize 的方法 |
-| **计算规则冲突** | 同一业务值的计算逻辑在多处不一致 | HIGH | 折扣率在 A 处 0.9，B 处 0.85 |
-| **配置漂移** | 同一 @Value 在不同文件中的默认值不一致 | MEDIUM | maxRetry: 3 vs maxRetry: 5 |
-| **唯一性约束重复** | 多个 existsBy 检查同一组字段但逻辑不同 | MEDIUM | existsByNameAndStatus vs existsByNameAndType |
+| # | 检测类型 | 算法 | 严重度 |
+|---|---------|------|--------|
+| 1 | **同字段阈值冲突** | 按 params.field 分组 → 比较 operator+threshold → 不一致则报 | CRITICAL |
+| 2 | **状态机断裂** | 提取所有 WORKFLOW 规则 → 构建状态转移图 → 检测死端 | CRITICAL |
+| 3 | **权限移除** | 当前快照 vs 上一快照 → AUTHORIZATION 规则减少 → 报警 | HIGH |
+| 4 | **计算不一致** | 按 params.formula 分组 → 比较 CALCULATION 规则参数 | HIGH |
+| 5 | **配置漂移** | 按 params.property 分组 → 比较 CONFIGURATION 规则 default | MEDIUM |
+| 6 | **唯一性重叠** | 按 params.field 分组 → 多个 existsBy 覆盖相同字段 | MEDIUM |
 
 ### 3.2 检测流程
 
 ```
-1. 加载当前规则快照 + 上一版本规则快照
-2. 按 rule_type 分组
-3. 对每组：
-   a. 同域规则：提取所有 params["field"] 相同的规则 → 比对阈值
-   b. 流程链：提取同一 flow 的规则 → 按 flow step 排序 → 检查一致性
-   c. 变更追踪：added 规则的 params 与已有规则比对
-4. 生成冲突报告 JSON
+1. 加载当前 business_rules + 上一次 business_rule_snapshots
+2. diff: 找出 added / removed / modified 规则
+3. 对每条 modified 规则:
+   a. 按 rule_type 找同类型规则
+   b. 按 params.field 找同字段规则
+   c. 比较阈值 → 不一致则记录冲突
+4. 对每条 removed 规则:
+   a. 如果是 AUTHORIZATION 类型 → 权限泄露警告
+   b. 如果是 WORKFLOW 类型 → 检查上下游是否有规则引用它
+5. 生成冲突报告 JSON
 ```
 
 ---
@@ -206,80 +282,79 @@ Layer 2 — 规则→规则关系
 ### 4.1 CLI 命令
 
 ```bash
-# 规则提取
-roam business-rules extract          # 从当前代码提取所有业务规则
-roam business-rules extract --domain 订单管理  # 指定域
-roam business-rules extract --diff            # 与上次快照对比
+# 规则提取（纯 AST，零 API 调用）
+roam business-rules extract              # 全量提取
+roam business-rules extract --update     # 增量提取（仅变更文件）
 
 # 图谱操作
-roam business-rules graph            # 构建/更新规则图谱
-roam business-rules graph --export   # 导出为 JSON/HTML
-roam business-rules explain <rule-id>  # 解释单条规则
-roam business-rules path <rule-a> <rule-b>  # 规则间关系路径
+roam business-rules graph                # 构建/重建规则图谱
+roam business-rules graph --stats        # 统计概览
+roam business-rules explain <rule-id>    # 解释单条规则
+roam business-rules related <rule-id>    # 查看关联规则
 
-# 冲突检测
-roam business-rules check            # 全面冲突检测
-roam business-rules check --domain 订单管理  # 指定域检测
-roam business-rules check --preflight  # 作为 preflight 的一环
+# 冲突检测（纯计算）
+roam business-rules check                # 全面检测
+roam business-rules check --domain 订单管理
+roam business-rules check --preflight    # 集成到 preflight
 
 # 快照管理
-roam business-rules snapshot         # 创建当前快照
-roam business-rules diff             # 对比两个快照
+roam business-rules snapshot             # 创建快照
+roam business-rules diff                 # 对比最新两个快照
+roam business-rules diff --from <label> --to <label>
 ```
 
-### 4.2 MCP 工具（注册到 mcp_server.py）
+### 4.2 MCP 工具
 
 ```python
-# 在 MCP core preset 中新增：
+# 注册到 mcp_server.py core preset:
 "business_rules_extract": cmd_br_extract.extract,
-"business_rules_check": cmd_br_check.check,
-"business_rules_graph": cmd_br_graph.graph,
-"business_rules_diff": cmd_br_diff.diff,
+"business_rules_check":   cmd_br_check.check,
+"business_rules_graph":   cmd_br_graph.graph,
+"business_rules_diff":    cmd_br_diff.diff,
 ```
 
 ---
 
 ## 实施路线图
 
-### Milestone 1: 最小可行版（2-3 天）
+### Milestone 1: 规则提取（MVP，零 LLM）
 
-- [x] Fork roam-code → business-rule-graph
+- [x] Fork → business-rule-graph 仓库
 - [ ] 新增 `src/roam/business_rules/` 模块骨架
-- [ ] 实现 `patterns.py` — 5 种核心 Java 规则模式
-- [ ] 实现 `extractor.py` — 基础规则提取
-- [ ] 新增 DB schema（business_rules 表）
-- [ ] 实现 `cmd_br_extract.py` — 第一条 CLI 命令
-- [ ] 在 P2040 项目上跑通第一个规则提取
+- [ ] 实现 `patterns.py` — ANNOTATION_RULE_MAP + 枚举/if-throw 模式
+- [ ] 实现 `extractor.py` — 纯 AST 提取，从 index.db 读取 symbols
+- [ ] 新增 DB schema（business_rules + business_rule_code_edges）
+- [ ] 实现 `cmd_br_extract.py` — roam business-rules extract
+- [ ] 在 P2040 项目上跑通
 
-### Milestone 2: 图谱 + 冲突（2-3 天）
+### Milestone 2: 图谱 + 冲突
 
-- [ ] 实现 `models.py` — 完整规则数据模型
-- [ ] 实现 `graph.py` — 规则图谱构建/查询
-- [ ] 实现 `conflict.py` — 3 种核心冲突检测
-- [ ] 新增 business_rule_edges 等辅助表
-- [ ] 实现 `cmd_br_check.py` — 冲突检测 CLI
+- [ ] 实现 `graph.py` — 规则图谱构建（same_field/same_flow 自动建边）
+- [ ] 实现 `conflict.py` — 3 种核心检测（阈值冲突/权限移除/状态机断裂）
+- [ ] 新增 business_rule_edges 表
+- [ ] 实现 `cmd_br_check.py` + `cmd_br_graph.py`
 
-### Milestone 3: 快照 + MCP（1-2 天）
+### Milestone 3: 快照 + MCP + 集成
 
-- [ ] 实现 `snapshot.py` — 规则版本快照
-- [ ] 实现 `cmd_br_diff.py` — 快照对比
+- [ ] 实现 `snapshot.py` — 快照 + diff
 - [ ] MCP 工具注册
-- [ ] 集成到 preflight 流程（代码变更自动触发检查）
+- [ ] 集成到 roam preflight（代码变更自动触发）
+- [ ] understand-anything skill 标记废弃
 
-### Milestone 4: 生产化（持续）
+### Milestone 4: 可选增强
 
-- [ ] 支持更多 Java 规则模式（Spring Security、MyBatis、Redis 锁等）
-- [ ] 冲突检测规则扩展
+- [ ] `describe.py` — LLM 可选增强：中文描述 + 域分类
+- [ ] 支持更多 Java 模式（MyBatis、Redis 锁等）
 - [ ] HTML 可视化报告
-- [ ] 支持 Python/Django 等其他语言
+- [ ] SVN 快照模式支持
 
 ---
 
 ## 风险与边界
 
-| 风险 | 缓解措施 |
-|------|----------|
-| AST 无法识别复杂业务语义 | 先用固定模式覆盖 80% 场景，剩余的留 LLM fallback |
-| SVN 项目无 git history | 用 snapshot 时间戳替代 commit hash |
-| roam-code 上游更新冲突 | 定期 rebase，改动集中在 `business_rules/` 独立模块 |
-| 中文业务术语识别 | 从类名/包名/注解 message 中提取中文关键词 |
+| 风险 | 缓解 |
+|------|------|
+| AST 提取的 domain 不准确 | 默认从包名推断 + 可选 LLM 修正 |
+| SVN 项目无 git history | snapshot 用时间戳 + 自定义 label |
+| roam-code 上游更新 | 改动集中在 business_rules/ 模块，定期 rebase |
+| 语义归并（同规则不同写法） | 用 hash(params + field) 做去重，LLM 归并为可选增强 |
