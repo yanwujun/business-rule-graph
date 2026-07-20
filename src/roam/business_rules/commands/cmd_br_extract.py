@@ -172,18 +172,25 @@ def _get_db_path():
 
 @click.command("business-rules-graph")
 @click.option("--stats", is_flag=True, help="Show statistics only")
-def cmd_br_graph(stats=False):
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def cmd_br_graph(stats=False, as_json=False):
     """Build/rebuild business rule knowledge graph"""
     db_path = _get_db_path()
     graph = RuleGraph(db_path)
     if stats:
         s = graph.stats()
-        click.echo(f"Rules: {s['rules']}  Edges: {s['edges']}")
+        if as_json:
+            click.echo(json.dumps(s, indent=2))
+        else:
+            click.echo(f"Rules: {s['rules']}  Edges: {s['edges']}")
     else:
         result = graph.build()
-        click.echo(f"Graph built: {result['total_edges']} edges")
-        for et, n in sorted(result["by_type"].items()):
-            click.echo(f"  {et}: {n}")
+        if as_json:
+            click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            click.echo(f"Graph built: {result['total_edges']} edges")
+            for et, n in sorted(result["by_type"].items()):
+                click.echo(f"  {et}: {n}")
 
 
 @click.command("business-rules-check")
