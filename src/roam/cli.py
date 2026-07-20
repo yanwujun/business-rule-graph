@@ -455,6 +455,22 @@ _COMMANDS = {
     "evidence-diff": ("roam.commands.cmd_evidence_diff", "evidence_diff"),
     "evidence-doctor": ("roam.commands.cmd_evidence_doctor", "evidence_doctor"),
     "evidence-oscal": ("roam.commands.cmd_evidence_oscal", "evidence_oscal"),
+    # Business Rule Graph (business-rule-graph extension)
+    "business-rules-extract": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_extract",
+    ),
+    "business-rules-summarize": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_summarize",
+    ),
+    "business-rules-graph": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_graph",
+    ),
+    "business-rules-check": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_check",
+    ),
+    "business-rules-diff": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_diff",
+    ),
 }
 
 # Command categories for organized --help display

@@ -1,13 +1,16 @@
-"""CLI commands for business rule graph — M1: extract + summarize"""
+"""CLI commands for business rule graph — M1+M2: extract, summarize, graph, check, diff"""
 from __future__ import annotations
 
 import json
+import os as _os
 import sqlite3
 
 import click
 
 from roam.business_rules.extractor import BusinessRuleExtractor
 from roam.business_rules.summarizer import RuleSummarizer
+from roam.business_rules.graph import RuleGraph
+from roam.business_rules.conflict import ConflictDetector
 from roam.db.connection import find_project_root
 
 
@@ -26,7 +29,7 @@ def cmd_br_extract(update=False, as_json=False, project_root=None):
             root = "."
 
     db_path = f"{root}/.roam/index.db"
-    if not __import__("os").path.exists(db_path):
+    if not _os.path.exists(db_path):
         click.echo("Error: No index found. Run 'roam init' first.", err=True)
         return
 

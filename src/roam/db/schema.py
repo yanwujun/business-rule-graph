@@ -460,4 +460,63 @@ CREATE TABLE IF NOT EXISTS findings (
 CREATE INDEX IF NOT EXISTS idx_findings_subject ON findings(subject_kind, subject_id);
 CREATE INDEX IF NOT EXISTS idx_findings_detector ON findings(source_detector);
 CREATE INDEX IF NOT EXISTS idx_findings_created ON findings(created_at);
+
+-- ============================================================
+-- Business Rules (business-rule-graph extension)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS business_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id TEXT NOT NULL UNIQUE,
+    rule_type TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
+    flow TEXT DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    severity TEXT DEFAULT 'medium',
+    source_file TEXT NOT NULL,
+    source_line INTEGER DEFAULT 0,
+    source_symbol TEXT NOT NULL DEFAULT '',
+    params JSON DEFAULT '{}',
+    annotations JSON DEFAULT '[]',
+    hash TEXT NOT NULL DEFAULT '',
+    extraction TEXT DEFAULT '',
+    merge_with TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_br_type ON business_rules(rule_type);
+CREATE INDEX IF NOT EXISTS idx_br_domain ON business_rules(domain);
+CREATE INDEX IF NOT EXISTS idx_br_file ON business_rules(source_file);
+CREATE INDEX IF NOT EXISTS idx_br_hash ON business_rules(hash);
+CREATE INDEX IF NOT EXISTS idx_br_merge ON business_rules(merge_with);
+
+CREATE TABLE IF NOT EXISTS business_rule_code_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id INTEGER NOT NULL REFERENCES business_rules(id) ON DELETE CASCADE,
+    symbol_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL DEFAULT 'implemented_by'
+);
+CREATE INDEX IF NOT EXISTS idx_brce_rule ON business_rule_code_edges(rule_id);
+CREATE INDEX IF NOT EXISTS idx_brce_symbol ON business_rule_code_edges(symbol_id);
+
+CREATE TABLE IF NOT EXISTS business_rule_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_rule_id INTEGER NOT NULL REFERENCES business_rules(id) ON DELETE CASCADE,
+    target_rule_id INTEGER NOT NULL REFERENCES business_rules(id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL,
+    confidence REAL DEFAULT 1.0
+);
+CREATE INDEX IF NOT EXISTS idx_bre_source ON business_rule_edges(source_rule_id);
+CREATE INDEX IF NOT EXISTS idx_bre_target ON business_rule_edges(target_rule_id);
+
+CREATE TABLE IF NOT EXISTS business_rule_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT,
+    git_commit TEXT,
+    snapshot_at TEXT DEFAULT (datetime('now')),
+    rule_count INTEGER DEFAULT 0,
+    added_rules JSON DEFAULT '[]',
+    removed_rules JSON DEFAULT '[]',
+    modified_rules JSON DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_brs_label ON business_rule_snapshots(label);
 """
