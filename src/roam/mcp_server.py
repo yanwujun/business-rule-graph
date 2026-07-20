@@ -235,6 +235,13 @@ _WORKFLOW_TOOLS = {
     "roam_for_bug_fix",
     "roam_for_refactor",
     "roam_for_security_review",
+    # Business Rule Graph tools
+    "business_rules_extract",
+    "business_rules_summarize",
+    "business_rules_graph",
+    "business_rules_check",
+    "business_rules_snapshot",
+    "business_rules_diff",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -19789,6 +19796,78 @@ def roam_verdict(
     args = ["verdict", "--mode", mode, "--policy-profile", policy_profile]
     if bundle:
         args.extend(["--bundle", bundle])
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# Business Rule Graph MCP tools
+# ---------------------------------------------------------------------------
+
+@_tool(
+    name="business_rules_extract",
+    description=(
+        "从 Java/Spring 代码提取业务规则(AST引擎,零LLM)。扫描 if-throw 断言、"
+        "状态判断、枚举定义、方法命名约定和注解,提取为结构化规则。"
+    ),
+)
+def business_rules_extract(update: bool = False, root: str = ".") -> dict:
+    args = ["business-rules-extract", "--json"]
+    if update:
+        args.append("--update")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="business_rules_summarize",
+    description=(
+        "LLM 语义增强 — 为 AST 提取的规则补充业务域/流程/自然语言描述,"
+        "归并同义规则。需要 OPENAI_API_KEY 或兼容 API key。"
+    ),
+)
+def business_rules_summarize(batch_size: int = 50, root: str = ".") -> dict:
+    return _run_roam(["business-rules-summarize", "--json", "--batch-size", str(batch_size)], root)
+
+
+@_tool(
+    name="business_rules_graph",
+    description="构建/重建业务规则知识图谱(same_field/same_flow/conflicts_with 自动建边)。",
+)
+def business_rules_graph(root: str = ".") -> dict:
+    return _run_roam(["business-rules-graph", "--json"], root)
+
+
+@_tool(
+    name="business_rules_check",
+    description="检测业务规则冲突:同字段阈值不一致、权限移除、状态机断裂等。",
+)
+def business_rules_check(snapshot_id: int = 0, root: str = ".") -> dict:
+    args = ["business-rules-check", "--json"]
+    if snapshot_id:
+        args.extend(["--snapshot-id", str(snapshot_id)])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="business_rules_snapshot",
+    description="创建业务规则版本快照,用于后续 diff 比对。",
+)
+def business_rules_snapshot(label: str = "", root: str = ".") -> dict:
+    args = ["business-rules-snapshot"]
+    if label:
+        args.extend(["--label", label])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="business_rules_diff",
+    description="对比两个业务规则快照,返回新增/删除/变更规则列表。",
+)
+def business_rules_diff(from_id: int = 0, to_id: int = 0, root: str = ".") -> dict:
+    args = ["business-rules-diff", "--json"]
+    if from_id:
+        args.extend(["--from", str(from_id)])
+    if to_id:
+        args.extend(["--to", str(to_id)])
     return _run_roam(args, root)
 
 
