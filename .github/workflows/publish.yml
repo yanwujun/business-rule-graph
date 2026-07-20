@@ -141,7 +141,7 @@ jobs:
       artifact_digest: ${{ steps.upload_bundle.outputs.artifact-digest }}
       manifest_sha256: ${{ steps.release_manifest.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
@@ -326,7 +326,7 @@ jobs:
       artifact_digest: ${{ steps.upload_subset.outputs.artifact-digest }}
     steps:
       - name: Check out the resolved recovery helper
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
@@ -684,7 +684,7 @@ jobs:
       id-token: write  # obtain the keyless Fulcio certificate for cosign
     steps:
       - name: Check out the resolved verifier lock
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
@@ -1382,7 +1382,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
