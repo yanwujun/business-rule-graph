@@ -89,12 +89,31 @@ class ConflictDetector:
         if not transitions:
             return results
 
-        # 死端: 某个状态的 from 出现了，但没有 to 指向它后面的状态
+        # 死端: 状态有入边但无出边（非终点状态）
+        terminal_states = {t for (_, t) in transitions}
+        for state in all_from:
+            if state not in all_to and state in terminal_states:
+                pass  # 有出无入 = 起点，合理
+            elif state not in all_to and state not in terminal_states:
+                pass  # 既无入也无出，后续枚举检测覆盖
+
         for (f, t) in transitions:
-            if t not in all_from and t in all_to:
-                continue  # 终点状态，合理
-            if t in all_from:
-                continue  # 有下游，正常
+            # 死端: t 被到达过但自身没有出边，且不是枚举中定义的终点状态
+            is_end_state = any(t in states for states in enum_states.values() if t == states[-1])
+            if t not in all_from and not is_end_state:
+                results.append(Conflict("status_deadend", "medium",
+                    {"rule_id": f"{f}→{t}", "description": f"状态转移 {f}→{t}"},
+                    None, f"状态 '{t}' 只有入边无出边，可能是死端状态"))
+
+        # 孤立入口: 状态有出边但无入边（非起点状态）
+        for state in all_to:
+            if state not in all_from:
+                # 检查是否为枚举定义的合法起点
+                is_start_state = any(state == states[0] for states in enum_states.values() if states)
+                if not is_start_state:
+                    results.append(Conflict("orphan_entry", "medium",
+                        {"rule_id": f"→{state}", "description": f"状态 '{state}'"},
+                        None, f"状态 '{state}' 有入边但无出边，且不是枚举定义起点，可能是孤立入口"))
 
         for rid, states in enum_states.items():
             if len(states) < 2:

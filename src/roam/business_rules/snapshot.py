@@ -90,8 +90,8 @@ class RuleSnapshot:
                 a1 = a2 = r1 = r2 = set()
 
             return {
-                "from": {"id": from_id, "label": s1["label"], "at": s1["snapshot_at"], "count": s1["rule_count"]},
-                "to": {"id": to_id, "label": s2["label"], "at": s2["snapshot_at"], "count": s2["rule_count"]},
+                "from": {"id": from_id, "label": s1["label"], "at": s1["created_at"], "count": s1["rule_count"]},
+                "to": {"id": to_id, "label": s2["label"], "at": s2["created_at"], "count": s2["rule_count"]},
                 "added": sorted(a2 - a1),
                 "removed": sorted(r2 - r1),
                 "net_change": s2["rule_count"] - s1["rule_count"],

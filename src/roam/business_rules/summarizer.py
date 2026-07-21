@@ -148,23 +148,8 @@ class RuleSummarizer:
             result = json.loads(content)
             result_rules = result.get("rules", [])
 
-            # 合并 LLM 输出回原始规则
-            merged = []
-            for orig in rules:
-                llm = self._find_rule(result_rules, orig.get("rule_id", ""))
-                if llm:
-                    orig["domain"] = llm.get("domain", orig.get("domain", ""))
-                    orig["flow"] = llm.get("flow", orig.get("flow", ""))
-                    orig["description"] = llm.get(
-                        "description", orig.get("description", "")
-                    )
-                    orig["severity"] = llm.get(
-                        "severity", orig.get("severity", "medium")
-                    )
-                    orig["merge_with"] = llm.get("merge_with")
-                merged.append(orig)
-
-            return merged
+            # 合并 LLM 输出回原始规则 — 使用 O(1) _merge_results 替代 O(n*m) _find_rule
+            return self._merge_results(rules, result_rules)
 
         except Exception as e:
             logger.warning("LLM call failed: %s — falling back to template", e)
@@ -185,30 +170,36 @@ class RuleSummarizer:
             merged.append(orig)
         return merged
 
-    def _find_rule(self, results: list[dict], rule_id: str) -> Optional[dict]:
-        """保留兼容，内部改用 _merge_results"""
-        for r in results:
-            if r.get("rule_id") == rule_id:
-                return r
-        return None
-
     def _template_fallback(self, rules: list[dict]) -> list[dict]:
-        """无 LLM 时的模板降级方案"""
+        """无 LLM 时的模板降级方案 — 直接赋值覆盖空值"""
         for r in rules:
-            exc_msg = r.get("exception_message", "")
-            status = r.get("status_value", "")
-            r.setdefault("domain", "未分类")
-            r.setdefault("flow", "")
+            exc_msg = r.get("exception_message", "") or (r.get("params", {}) or {}).get("exception_message", "")
+            status = r.get("status_value", "") or (r.get("params", {}) or {}).get("status_value", "")
+
+            # 推断 domain（从 source_file 的包名）
+            if not r.get("domain"):
+                from .patterns import domain_from_package
+                pkg = r.get("source_file", "").replace("/", ".").replace(".java", "")
+                r["domain"] = domain_from_package(pkg)
+            if not r.get("domain"):
+                r["domain"] = "未分类"
+
+            # 推断 flow（从类名）
+            if not r.get("flow"):
+                from .patterns import flow_from_class
+                r["flow"] = flow_from_class(r.get("source_symbol", ""))
+            if not r.get("flow"):
+                r["flow"] = "通用流程"
 
             if exc_msg:
                 r["description"] = exc_msg
             elif status:
                 r["description"] = f"状态必须为: {status}"
-            elif r.get("description"):
-                pass  # keep existing
-            else:
+            elif not r.get("description"):
                 r["description"] = r.get("rule_id", "")
 
-            r.setdefault("severity", "medium")
-            r.setdefault("merge_with", None)
+            if not r.get("severity"):
+                r["severity"] = "medium"
+            if "merge_with" not in r:
+                r["merge_with"] = None
         return rules
