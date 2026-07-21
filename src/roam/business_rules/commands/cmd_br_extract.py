@@ -7,22 +7,15 @@ import sqlite3
 
 import click
 
-from roam.business_rules.extractor import BusinessRuleExtractor
-from roam.business_rules.summarizer import RuleSummarizer
-from roam.business_rules.graph import RuleGraph
-from roam.business_rules.conflict import ConflictDetector
-from roam.db.connection import find_project_root
-
 
 def _get_db_path():
     try:
+        from roam.db.connection import find_project_root
         root = find_project_root()
     except Exception:
         root = "."
     return f"{root}/.roam/index.db"
 
-
-# ——— extract ———
 
 @click.command("business-rules-extract")
 @click.option("--update", is_flag=True, help="Incremental: only changed files")
@@ -30,6 +23,8 @@ def _get_db_path():
 @click.option("--project-root", default=None, help="Project root (default: auto-detect)")
 def cmd_br_extract(update=False, as_json=False, project_root=None):
     """Extract business rules from Java/Spring Boot code (AST engine)"""
+    from roam.business_rules.extractor import BusinessRuleExtractor
+
     root = project_root or _root()
     db_path = f"{root}/.roam/index.db"
     if not _os.path.exists(db_path):
@@ -38,7 +33,6 @@ def cmd_br_extract(update=False, as_json=False, project_root=None):
 
     extractor = BusinessRuleExtractor(project_root=root)
     rules = extractor.extract_from_db(db_path, incremental=update)
-
     if not rules:
         click.echo("No business rules detected.")
         return
@@ -67,8 +61,6 @@ def cmd_br_extract(update=False, as_json=False, project_root=None):
             click.echo(f"  {rt}: {count}")
 
 
-# ——— summarize ———
-
 @click.command("business-rules-summarize")
 @click.option("--api-key", default=None, help="LLM API key")
 @click.option("--base-url", default=None, help="LLM API base URL")
@@ -77,6 +69,8 @@ def cmd_br_extract(update=False, as_json=False, project_root=None):
 @click.option("--json", "as_json", is_flag=True)
 def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_json=False):
     """LLM semantic enrichment — add business context to extracted rules"""
+    from roam.business_rules.summarizer import RuleSummarizer
+
     db_path = _get_db_path()
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -114,13 +108,13 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
         click.echo(f"Summarized {len(enriched)} rules" + (f" ({len(merges)} merged)" if merges else ""))
 
 
-# ——— graph ———
-
 @click.command("business-rules-graph")
 @click.option("--stats", is_flag=True, help="Show statistics only")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def cmd_br_graph(stats=False, as_json=False):
     """Build/rebuild business rule knowledge graph"""
+    from roam.business_rules.graph import RuleGraph
+
     db_path = _get_db_path()
     graph = RuleGraph(db_path)
     if stats:
@@ -136,13 +130,13 @@ def cmd_br_graph(stats=False, as_json=False):
                 click.echo(f"  {et}: {n}")
 
 
-# ——— check ———
-
 @click.command("business-rules-check")
-@click.option("--snapshot-id", type=int, default=None, help="Compare against snapshot")
+@click.option("--snapshot-id", type=int, default=None)
 @click.option("--json", "as_json", is_flag=True)
 def cmd_br_check(snapshot_id=None, as_json=False):
     """Detect business rule conflicts"""
+    from roam.business_rules.conflict import ConflictDetector
+
     db_path = _get_db_path()
     detector = ConflictDetector(db_path)
     conflicts = detector.detect(previous_snapshot_id=snapshot_id)
@@ -157,20 +151,19 @@ def cmd_br_check(snapshot_id=None, as_json=False):
             click.echo(f"[{c.severity.upper()}] {c.conflict_type}: {c.description}")
 
 
-# ——— diff ———
-
 @click.command("business-rules-diff")
-@click.option("--from", "from_id", type=int, help="From snapshot ID")
-@click.option("--to", "to_id", type=int, help="To snapshot ID (default: latest)")
+@click.option("--from", "from_id", type=int)
+@click.option("--to", "to_id", type=int)
 def cmd_br_diff(from_id=None, to_id=None):
     """Diff two business rule snapshots"""
     from roam.business_rules.snapshot import RuleSnapshot
+
     db_path = _get_db_path()
     snap = RuleSnapshot(db_path)
     if from_id is None or to_id is None:
         snapshots = snap.list_snapshots(limit=2)
         if len(snapshots) < 2:
-            click.echo("Need at least 2 snapshots. Create one first.")
+            click.echo("Need at least 2 snapshots.")
             return
         from_id = from_id or snapshots[1]["id"]
         to_id = to_id or snapshots[0]["id"]
@@ -186,24 +179,21 @@ def cmd_br_diff(from_id=None, to_id=None):
         click.echo(f"  Removed: {len(result['removed'])}")
 
 
-# ——— snapshot ———
-
 @click.command("business-rules-snapshot")
-@click.option("--label", default="", help="Snapshot label")
+@click.option("--label", default="")
 def cmd_br_snapshot(label=""):
     """Create a business rule snapshot"""
     from roam.business_rules.snapshot import RuleSnapshot
+
     db_path = _get_db_path()
     snap = RuleSnapshot(db_path)
     sid = snap.create(label=label)
     click.echo(f"Snapshot {sid} created" + (f": {label}" if label else ""))
 
 
-# ——— list ———
-
 @click.command("business-rules-list")
-@click.option("--type", "rule_type", default=None, help="Filter by rule type")
-@click.option("--domain", default=None, help="Filter by domain")
+@click.option("--type", "rule_type", default=None)
+@click.option("--domain", default=None)
 @click.option("--json", "as_json", is_flag=True)
 def cmd_br_list(rule_type=None, domain=None, as_json=False):
     """List all extracted business rules"""
@@ -233,13 +223,13 @@ def cmd_br_list(rule_type=None, domain=None, as_json=False):
             click.echo(f"{r['rule_id']:<50} {r['rule_type']:<16} {r['domain']:<12} {r['description'][:40]}")
 
 
-# ——— explain ———
-
 @click.command("business-rules-explain")
 @click.argument("rule_id")
 @click.option("--json", "as_json", is_flag=True)
 def cmd_br_explain(rule_id, as_json=False):
     """Show details of a single business rule"""
+    from roam.business_rules.graph import RuleGraph
+
     db_path = _get_db_path()
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -247,7 +237,6 @@ def cmd_br_explain(rule_id, as_json=False):
         if not rule:
             click.echo(f"Rule not found: {rule_id}")
             return
-
         graph = RuleGraph(db_path)
         related = graph.related(rule_id)
 
@@ -262,7 +251,6 @@ def cmd_br_explain(rule_id, as_json=False):
         click.echo(f"Desc:    {r['description']}")
         click.echo(f"Source:  {r['source_file']}:{r['source_line']}")
         click.echo(f"Severity:{r['severity']}")
-        click.echo(f"Hash:    {r['hash']}")
         if r.get("merge_with"):
             click.echo(f"Merged:  → {r['merge_with']}")
         if related:
@@ -273,6 +261,7 @@ def cmd_br_explain(rule_id, as_json=False):
 
 def _root():
     try:
+        from roam.db.connection import find_project_root
         return find_project_root()
     except Exception:
         return "."
