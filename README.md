@@ -2,7 +2,7 @@
 
 # business-rule-graph
 
-**AI 修改代码后，自动判断是否引入业务规则冲突。**
+**梳理业务规则 · 辅助 AI 开发 · 检测冲突 · 支撑架构升级**
 
 *基于 [roam-code](https://github.com/Cranot/roam-code) v13 · AST 确定性引擎 + LLM 语义引擎 · 双引擎驱动*
 
@@ -10,7 +10,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Base](https://img.shields.io/badge/base-roam--code%20v13-6e40c9)](https://github.com/Cranot/roam-code)
 
-<sub>100% 本地 · AST 精确提取 + LLM 语义增强 · 规则图谱 + 冲突检测 · 支持多根工作区 · 兼容 SVN</sub>
+<sub>100% 本地 · 后端 Java + 前端 React 双提取 · 规则图谱 + 冲突检测 · 多根工作区 · 向量图可视化 · 兼容 SVN</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
 <sub>281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
@@ -36,9 +36,14 @@
 
 ## Business Rule Graph
 
-> **核心问题：AI 帮我改了代码，有没有偷偷改掉业务规则？**
+> **四大场景：梳理业务规则 → 辅助 AI 开发 → 检测变更冲突 → 支撑架构升级**
 
-`business-rule-graph` 在 roam-code 基础上新增 **双引擎业务规则分析**：
+`business-rule-graph` 在 roam-code 基础上新增 **双引擎业务规则分析**，从代码中自动提取业务规则，构建可查询、可视化的规则知识图谱：
+
+- **梳理**: 从 Java/Spring Boot 和 React/TypeScript 代码中自动提取 8 类业务规则，生成结构化规则清单
+- **辅助 AI**: 通过 CLI + MCP 工具接口，让 AI 编码智能体在改代码前了解相关业务约束
+- **检测**: 改代码后自动对比基线，发现阈值冲突、权限移除、状态机断裂等风险
+- **架构升级**: 多根工作区统一分析，跨项目规则图谱，为系统拆分/合并/重构提供业务规则全景图
 
 ```
 AST 引擎 (tree-sitter)              LLM 引擎 (OpenAI 兼容)
