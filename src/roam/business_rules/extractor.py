@@ -47,11 +47,14 @@ class BusinessRuleExtractor:
     def extract_from_db(
         self, db_path: str, incremental: bool = False
     ) -> list[BusinessRule]:
-        """从 roam-code index.db 提取（配合 roam init）"""
         rules: list[BusinessRule] = []
         seen = set()
-
         files_to_scan = self._get_files_from_db(db_path, incremental)
+        total = len(files_to_scan)
+
+        for i, file_rel in enumerate(files_to_scan):
+            if total > 10 and i % max(1, total // 10) == 0:
+                logger.info("Extracting... %d/%d", i + 1, total)
 
         for file_rel in files_to_scan:
             file_abs = self.project_root / file_rel

@@ -474,6 +474,12 @@ _COMMANDS = {
     "business-rules-snapshot": (
         "roam.business_rules.commands.cmd_br_extract", "cmd_br_snapshot",
     ),
+    "business-rules-list": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_list",
+    ),
+    "business-rules-explain": (
+        "roam.business_rules.commands.cmd_br_extract", "cmd_br_explain",
+    ),
 }
 
 # Command categories for organized --help display

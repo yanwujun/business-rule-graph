@@ -170,7 +170,23 @@ class RuleSummarizer:
             logger.warning("LLM call failed: %s — falling back to template", e)
             return self._template_fallback(rules)
 
+    def _merge_results(self, rules: list[dict], results: list[dict]) -> list[dict]:
+        """O(1) 索引合并 — 替代 O(n*m) find_rule"""
+        by_id = {r["rule_id"]: r for r in results if r.get("rule_id")}
+        merged = []
+        for orig in rules:
+            llm = by_id.get(orig.get("rule_id", ""))
+            if llm:
+                orig["domain"] = llm.get("domain", orig.get("domain", ""))
+                orig["flow"] = llm.get("flow", orig.get("flow", ""))
+                orig["description"] = llm.get("description", orig.get("description", ""))
+                orig["severity"] = llm.get("severity", orig.get("severity", "medium"))
+                orig["merge_with"] = llm.get("merge_with")
+            merged.append(orig)
+        return merged
+
     def _find_rule(self, results: list[dict], rule_id: str) -> Optional[dict]:
+        """保留兼容，内部改用 _merge_results"""
         for r in results:
             if r.get("rule_id") == rule_id:
                 return r
