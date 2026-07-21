@@ -103,6 +103,11 @@ class BusinessRuleExtractor:
             self._extract_annotations(source, file_path, domain)
         )
 
+        # 优先级 4: MyBatis Mapper 方法 + Redis 关键词
+        rules.extend(
+            self._extract_mybatis_redis(source, file_path, domain)
+        )
+
         return rules
 
     # ---- helpers ----

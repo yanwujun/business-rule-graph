@@ -154,7 +154,52 @@ ANNOTATION_RULE_MAP = {
     "Value":           (RuleType.CONFIGURATION, "property"),
     "Transactional":   (RuleType.WORKFLOW, "transactional"),
     "EventListener":   (RuleType.PROCESS, "event"),
+    # MyBatis
+    "Select":          (RuleType.DATA_INTEGRITY, "mybatis_select"),
+    "Insert":          (RuleType.DATA_INTEGRITY, "mybatis_insert"),
+    "Update":          (RuleType.DATA_INTEGRITY, "mybatis_update"),
+    "Delete":          (RuleType.DATA_INTEGRITY, "mybatis_delete"),
+    # Spring Cache / Redis
+    "Cacheable":       (RuleType.INTEGRATION, "cache_read"),
+    "CacheEvict":      (RuleType.INTEGRATION, "cache_evict"),
+    "CachePut":        (RuleType.INTEGRATION, "cache_write"),
+    # Configuration
+    "ConfigurationProperties": (RuleType.CONFIGURATION, "config_prefix"),
+    "Scheduled":       (RuleType.PROCESS, "scheduled"),
+    "Async":           (RuleType.PROCESS, "async"),
+    # Data
+    "Table":           (RuleType.DATA_INTEGRITY, "table_mapping"),
+    "Column":          (RuleType.DATA_INTEGRITY, "column_def"),
 }
+
+# ============================================================
+# 优先级 4: MyBatis Mapper 方法命名 → 规则类型
+# ============================================================
+
+MYBATIS_METHOD_PATTERNS = {
+    "insert":         (RuleType.DATA_INTEGRITY, "insert"),
+    "insertSelective":(RuleType.DATA_INTEGRITY, "insert"),
+    "insertBatch":    (RuleType.DATA_INTEGRITY, "batch_insert"),
+    "updateByPrimaryKey":       (RuleType.DATA_INTEGRITY, "update"),
+    "updateByPrimaryKeySelective": (RuleType.DATA_INTEGRITY, "update"),
+    "updateBatchById": (RuleType.DATA_INTEGRITY, "batch_update"),
+    "deleteByPrimaryKey": (RuleType.DATA_INTEGRITY, "delete"),
+    "deleteBatch":    (RuleType.DATA_INTEGRITY, "batch_delete"),
+    "selectByPrimaryKey": (RuleType.DATA_INTEGRITY, "select"),
+    "selectBy":       (RuleType.DATA_INTEGRITY, "query"),
+    "countBy":        (RuleType.DATA_INTEGRITY, "count"),
+}
+
+# ============================================================
+# Redis/分布式锁 关键词检测
+# ============================================================
+
+REDIS_KEYWORDS = [
+    "RedisLock", "RedisDistributedLock", "Redisson",
+    "redisTemplate", "RedisTemplate", "StringRedisTemplate",
+    "opsForValue", "opsForHash", "opsForList", "opsForSet",
+    "setIfAbsent", "tryLock", "unlock",
+]
 
 
 # ============================================================
