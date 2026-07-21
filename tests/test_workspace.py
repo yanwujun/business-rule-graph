@@ -1,860 +1,140 @@
-"""Tests for multi-repo workspace support."""
+"""T101 [AC-19] [REQ-21] [REQ-23] workspace 模块测试
 
-from __future__ import annotations
-
+覆盖: parse_workspace / discover_workspace / resolve_workspace
+"""
 import json
-import sqlite3
-import subprocess
-import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+from roam.business_rules.workspace import (
+    WorkspaceProject,
+    parse_workspace,
+    discover_workspace,
+    resolve_workspace,
+)
+
+
+def _write_workspace(path: Path, folders: list[str]) -> Path:
+    """辅助: 写入一个 .code-workspace 文件"""
+    ws = {"folders": [{"path": f} for f in folders], "settings": {}}
+    path.write_text(json.dumps(ws))
+    return path
 
-# Workspace tests rely on process-global cwd; run sequentially under xdist
-pytestmark = pytest.mark.xdist_group("workspace")
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-def _git_init(root: Path):
-    """Initialize a git repo at *root*."""
-    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=root, capture_output=True)
-    subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
-
-
-def _run_roam(args, cwd):
-    """Run roam CLI as a subprocess."""
-    result = subprocess.run(
-        [sys.executable, "-m", "roam"] + args,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    return result
-
-
-# Workspace tests build per-module fixtures via subprocess `roam index`
-# calls. Under pytest-xdist, distinct modules run on different workers but
-# the indexer's writes to `.roam/index.db` (via SQLite + WAL) intermittently
-# race on cloud-synced filesystems (OneDrive/Dropbox). Pinning every test
-# in this module to a single xdist group fixes the flake. (DOG.5)
-pytestmark = pytest.mark.xdist_group("workspace_subprocess")
-
-
-@pytest.fixture(scope="module")
-def workspace_root(tmp_path_factory):
-    """Create a workspace with a frontend and backend repo, each indexed."""
-    ws_root = tmp_path_factory.mktemp("workspace")
-
-    # --- Frontend repo (JS/TS-like) ---
-    fe_root = ws_root / "frontend"
-    fe_root.mkdir()
-    (fe_root / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "frontend",
-                "dependencies": {"vue": "^3.0.0", "axios": "^1.0.0"},
-            }
-        )
-    )
-    (fe_root / "src").mkdir()
-    (fe_root / "src" / "api.js").write_text(
-        'import axios from "axios";\n'
-        "\n"
-        'const api = axios.create({ baseURL: "/api" });\n'
-        "\n"
-        "export function fetchTransactions() {\n"
-        '  return api.get("/transactions");\n'
-        "}\n"
-        "\n"
-        "export function saveTransaction(data) {\n"
-        '  return api.post("/transactions/save", data);\n'
-        "}\n"
-        "\n"
-        "export function deleteTransaction(id) {\n"
-        "  return api.delete(`/transactions/${id}`);\n"
-        "}\n"
-        "\n"
-        "export function getArticle(id) {\n"
-        "  return api.get(`/articles/${id}`);\n"
-        "}\n"
-    )
-    (fe_root / "src" / "store.js").write_text(
-        'import { fetchTransactions, saveTransaction } from "./api";\n'
-        "\n"
-        "export class TransactionStore {\n"
-        "  async load() {\n"
-        "    const result = await fetchTransactions();\n"
-        "    return result.data;\n"
-        "  }\n"
-        "  async save(data) {\n"
-        "    return saveTransaction(data);\n"
-        "  }\n"
-        "}\n"
-    )
-    _git_init(fe_root)
-
-    # --- Backend repo (PHP-like with Laravel routes) ---
-    be_root = ws_root / "backend"
-    be_root.mkdir()
-    (be_root / "composer.json").write_text(
-        json.dumps(
-            {
-                "name": "backend",
-                "require": {"laravel/framework": "^12.0"},
-            }
-        )
-    )
-    (be_root / "artisan").write_text("#!/usr/bin/env php\n")
-    (be_root / "routes").mkdir()
-    (be_root / "routes" / "api.php").write_text(
-        "<?php\n"
-        "use App\\Http\\Controllers\\TransactionController;\n"
-        "use App\\Http\\Controllers\\ArticleController;\n"
-        "\n"
-        "Route::get('/transactions', [TransactionController::class, 'index']);\n"
-        "Route::post('/transactions/save', [TransactionController::class, 'store']);\n"
-        "Route::delete('/transactions/{id}', [TransactionController::class, 'destroy']);\n"
-        "Route::get('/articles/{id}', [ArticleController::class, 'show']);\n"
-    )
-    (be_root / "app").mkdir()
-    (be_root / "app" / "TransactionController.php").write_text(
-        "<?php\n"
-        "namespace App\\Http\\Controllers;\n"
-        "\n"
-        "class TransactionController {\n"
-        "    public function index() { return []; }\n"
-        "    public function store($request) { return null; }\n"
-        "    public function destroy($id) { return null; }\n"
-        "}\n"
-    )
-    (be_root / "app" / "ArticleController.php").write_text(
-        "<?php\n"
-        "namespace App\\Http\\Controllers;\n"
-        "\n"
-        "class ArticleController {\n"
-        "    public function show($id) { return null; }\n"
-        "}\n"
-    )
-    _git_init(be_root)
-
-    # Index both repos
-    _run_roam(["index"], fe_root)
-    _run_roam(["index"], be_root)
-
-    # Initialise the workspace (creates `.roam-workspace.json`). Without
-    # this, every test downstream of TestWsInit fails when run in
-    # isolation or under pytest-xdist (where ordering varies). DOG.5.
-    _run_roam(
-        ["ws", "init", str(fe_root), str(be_root), "--name", "fixture-ws"],
-        ws_root,
-    )
-
-    return ws_root
-
-
-# ===================================================================
-# Phase 1: Config, DB, ws init / ws status
-# ===================================================================
-
-
-class TestWorkspaceConfig:
-    """Test workspace config parsing and validation."""
-
-    def test_save_and_load_config(self, tmp_path):
-        from roam.workspace.config import load_workspace_config, save_workspace_config
-
-        config = {
-            "workspace": "test-ws",
-            "repos": [
-                {"path": "frontend", "role": "frontend"},
-                {"path": "backend", "role": "backend"},
-            ],
-            "connections": [],
-        }
-        save_workspace_config(tmp_path, config)
-        loaded = load_workspace_config(tmp_path)
-        assert loaded["workspace"] == "test-ws"
-        assert len(loaded["repos"]) == 2
-
-    def test_find_workspace_root(self, tmp_path):
-        from roam.workspace.config import find_workspace_root, save_workspace_config
-
-        # No config -> None
-        assert find_workspace_root(str(tmp_path)) is None
-
-        # Create config at root
-        save_workspace_config(
-            tmp_path,
-            {
-                "workspace": "test",
-                "repos": [{"path": "a"}],
-            },
-        )
-
-        # Find from root
-        assert find_workspace_root(str(tmp_path)) == tmp_path
-
-        # Find from subdirectory
-        sub = tmp_path / "sub" / "deep"
-        sub.mkdir(parents=True)
-        assert find_workspace_root(str(sub)) == tmp_path
-
-    def test_invalid_config_no_workspace(self, tmp_path):
-        from roam.workspace.config import load_workspace_config
-
-        (tmp_path / ".roam-workspace.json").write_text('{"repos": []}')
-        with pytest.raises(ValueError, match="Missing 'workspace'"):
-            load_workspace_config(tmp_path)
-
-    def test_invalid_config_no_repos(self, tmp_path):
-        from roam.workspace.config import load_workspace_config
-
-        (tmp_path / ".roam-workspace.json").write_text('{"workspace": "x"}')
-        with pytest.raises(ValueError, match="Missing or invalid 'repos'"):
-            load_workspace_config(tmp_path)
-
-    def test_invalid_config_repo_no_path(self, tmp_path):
-        from roam.workspace.config import load_workspace_config
-
-        (tmp_path / ".roam-workspace.json").write_text('{"workspace": "x", "repos": [{"name": "a"}]}')
-        with pytest.raises(ValueError, match="missing 'path'"):
-            load_workspace_config(tmp_path)
-
-    def test_get_repo_paths(self, tmp_path):
-        from roam.workspace.config import get_repo_paths
-
-        config = {
-            "workspace": "test",
-            "repos": [
-                {"path": "fe", "role": "frontend"},
-                {"path": "be", "role": "backend", "name": "my-backend"},
-            ],
-        }
-        paths = get_repo_paths(config, tmp_path)
-        assert len(paths) == 2
-        assert paths[0]["name"] == "fe"  # uses dir name
-        assert paths[0]["role"] == "frontend"
-        assert paths[1]["name"] == "my-backend"
-        assert paths[1]["db_path"] == (tmp_path / "be" / ".roam" / "index.db").resolve()
-
-
-class TestWorkspaceDB:
-    """Test workspace overlay DB."""
-
-    def test_schema_creation(self, tmp_path):
-        from roam.workspace.db import open_workspace_db
-
-        with open_workspace_db(tmp_path) as conn:
-            # Tables should exist
-            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-            table_names = [t["name"] for t in tables]
-            assert "ws_repos" in table_names
-            assert "ws_route_symbols" in table_names
-            assert "ws_cross_edges" in table_names
-
-    def test_upsert_repo(self, tmp_path):
-        from roam.workspace.db import get_repos, open_workspace_db, upsert_repo
-
-        with open_workspace_db(tmp_path) as conn:
-            rid = upsert_repo(conn, "fe", "/path/fe", "frontend", "/path/fe/.roam/index.db")
-            assert rid > 0
-
-            repos = get_repos(conn)
-            assert len(repos) == 1
-            assert repos[0]["name"] == "fe"
-
-            # Upsert same name updates
-            rid2 = upsert_repo(conn, "fe", "/new/path", "frontend", "/new/.roam/index.db")
-            assert rid2 == rid
-            repos = get_repos(conn)
-            assert len(repos) == 1
-            assert repos[0]["path"] == "/new/path"
-
-    def test_cross_edge_operations(self, tmp_path):
-        from roam.workspace.db import (
-            clear_cross_edges,
-            get_cross_edges,
-            open_workspace_db,
-            upsert_repo,
-        )
-
-        with open_workspace_db(tmp_path) as conn:
-            r1 = upsert_repo(conn, "fe", "/fe", "frontend", "/fe/db")
-            r2 = upsert_repo(conn, "be", "/be", "backend", "/be/db")
-
-            conn.execute(
-                "INSERT INTO ws_cross_edges "
-                "(source_repo_id, source_symbol_id, "
-                " target_repo_id, target_symbol_id, kind, metadata) "
-                "VALUES (?, 1, ?, 2, 'api_call', '{}')",
-                (r1, r2),
-            )
-
-            edges = get_cross_edges(conn)
-            assert len(edges) == 1
-            assert edges[0]["source_repo_name"] == "fe"
-            assert edges[0]["target_repo_name"] == "be"
-
-            clear_cross_edges(conn)
-            assert len(get_cross_edges(conn)) == 0
-
-
-class TestWsInit:
-    """Test `roam ws init` command."""
-
-    def test_ws_init_creates_config(self, workspace_root):
-        fe = workspace_root / "frontend"
-        be = workspace_root / "backend"
-        result = _run_roam(
-            ["ws", "init", str(fe), str(be), "--name", "test-ws"],
-            workspace_root,
-        )
-        assert result.returncode == 0
-        assert "test-ws" in result.stdout
-
-        # Config file should exist
-        config_path = workspace_root / ".roam-workspace.json"
-        assert config_path.exists()
-        config = json.loads(config_path.read_text())
-        assert config["workspace"] == "test-ws"
-        assert len(config["repos"]) == 2
-
-    def test_ws_init_json(self, workspace_root):
-        fe = workspace_root / "frontend"
-        be = workspace_root / "backend"
-        result = _run_roam(
-            ["--json", "ws", "init", str(fe), str(be), "--name", "test-ws-json"],
-            workspace_root,
-        )
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-init"
-        assert data["summary"]["repos"] == 2
-
-    def test_ws_init_detects_roles(self, workspace_root):
-        config_path = workspace_root / ".roam-workspace.json"
-        if config_path.exists():
-            config = json.loads(config_path.read_text())
-            roles = {r["name"]: r.get("role", "") for r in config["repos"]}
-            assert roles.get("frontend") == "frontend"
-            assert roles.get("backend") == "backend"
-
-    def test_ws_init_nonexistent_path(self, tmp_path):
-        result = _run_roam(
-            ["ws", "init", "/nonexistent/path"],
-            tmp_path,
-        )
-        assert result.returncode != 0 or "ERROR" in result.stderr
-
-
-class TestWsStatus:
-    """Test `roam ws status` command."""
-
-    def test_ws_status(self, workspace_root):
-        # Ensure workspace is initialized
-        fe = workspace_root / "frontend"
-        be = workspace_root / "backend"
-        _run_roam(["ws", "init", str(fe), str(be), "--name", "status-test"], workspace_root)
-
-        result = _run_roam(["ws", "status"], workspace_root)
-        assert result.returncode == 0
-        assert "status-test" in result.stdout
-        assert "frontend" in result.stdout
-        assert "backend" in result.stdout
-
-    def test_ws_status_json(self, workspace_root):
-        result = _run_roam(["--json", "ws", "status"], workspace_root)
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-status"
-        assert "repos" in data
-
-    def test_ws_status_no_workspace(self, tmp_path):
-        _git_init(tmp_path)
-        result = _run_roam(["ws", "status"], tmp_path)
-        assert result.returncode != 0
-
-
-# ===================================================================
-# Phase 2: API scanning and endpoint matching
-# ===================================================================
-
-
-class TestApiScanner:
-    """Test API call/route scanning."""
-
-    def test_scan_file_for_api_calls(self, tmp_path):
-        from roam.workspace.api_scanner import _scan_file_for_api_calls
-
-        src = tmp_path / "api.js"
-        src.write_text(
-            'const res = api.get("/users");\n'
-            'api.post("/users/create", data);\n'
-            'axios.delete("/users/123");\n'
-            "const x = 42;\n"  # not an API call
-        )
-        calls = _scan_file_for_api_calls(src, "api.js")
-        assert len(calls) == 3
-        assert calls[0]["url_pattern"] == "/users"
-        assert calls[0]["http_method"] == "GET"
-        assert calls[1]["url_pattern"] == "/users/create"
-        assert calls[1]["http_method"] == "POST"
-        assert calls[2]["url_pattern"] == "/users/123"
-        assert calls[2]["http_method"] == "DELETE"
-
-    def test_scan_file_for_routes_laravel(self, tmp_path):
-        from roam.workspace.api_scanner import _scan_file_for_routes
-
-        src = tmp_path / "routes.php"
-        src.write_text(
-            "<?php\n"
-            "Route::get('/users', [UserController::class, 'index']);\n"
-            "Route::post('/users/create', [UserController::class, 'store']);\n"
-            "Route::delete('/users/{id}', [UserController::class, 'destroy']);\n"
-            "Route::resource('/articles', ArticleController::class);\n"
-        )
-        routes = _scan_file_for_routes(src, "routes.php")
-        assert len(routes) == 4
-        assert routes[0]["url_pattern"] == "/users"
-        assert routes[0]["http_method"] == "GET"
-        assert routes[1]["url_pattern"] == "/users/create"
-        assert routes[1]["http_method"] == "POST"
-        assert routes[2]["url_pattern"] == "/users/{id}"
-        assert routes[2]["http_method"] == "DELETE"
-        assert routes[3]["http_method"] == "RESOURCE"
-
-    def test_scan_file_for_routes_express(self, tmp_path):
-        from roam.workspace.api_scanner import _scan_file_for_routes
-
-        src = tmp_path / "routes.js"
-        src.write_text("router.get('/users', handler);\napp.post('/users', createHandler);\n")
-        routes = _scan_file_for_routes(src, "routes.js")
-        assert len(routes) == 2
-        assert routes[0]["http_method"] == "GET"
-        assert routes[1]["http_method"] == "POST"
-
-    def test_scan_file_for_routes_fastapi(self, tmp_path):
-        from roam.workspace.api_scanner import _scan_file_for_routes
-
-        src = tmp_path / "main.py"
-        src.write_text(
-            '@app.get("/items")\n'
-            "def list_items():\n"
-            "    return []\n"
-            "\n"
-            '@router.post("/items")\n'
-            "def create_item():\n"
-            "    pass\n"
-        )
-        routes = _scan_file_for_routes(src, "main.py")
-        assert len(routes) == 2
-
-
-class TestUrlNormalization:
-    """Test URL normalization and matching."""
-
-    def test_normalize_url_basic(self):
-        from roam.workspace.api_scanner import _normalize_url
-
-        assert _normalize_url("/users") == "/users"
-        assert _normalize_url("/api/users") == "/users"
-        assert _normalize_url("/api/v1/users") == "/users"
-
-    def test_normalize_url_params(self):
-        from roam.workspace.api_scanner import _normalize_url
-
-        assert _normalize_url("/users/{id}") == "/users/[*]"
-        assert _normalize_url("/users/${id}") == "/users/[*]"
-        assert _normalize_url("/users/:userId") == "/users/[*]"
-
-    def test_normalize_url_trailing_slash(self):
-        from roam.workspace.api_scanner import _normalize_url
-
-        assert _normalize_url("/users/") == "/users"
-
-    def test_urls_equivalent(self):
-        from roam.workspace.api_scanner import _urls_equivalent
-
-        assert _urls_equivalent("/users", "/users")
-        assert _urls_equivalent("/users/[*]", "/users/[*]")
-        assert _urls_equivalent("/users/[*]", "/users/123")  # [*] matches anything
-        assert not _urls_equivalent("/users", "/items")
-        assert not _urls_equivalent("/users/a", "/users/a/b")
-
-
-class TestEndpointMatching:
-    """Test matching frontend calls to backend routes."""
-
-    def test_exact_match(self):
-        from roam.workspace.api_scanner import match_api_endpoints
-
-        fe_calls = [
-            {
-                "symbol_id": 1,
-                "url_pattern": "/users",
-                "http_method": "GET",
-                "file_path": "api.js",
-                "line": 1,
-                "symbol_name": "getUsers",
-            }
-        ]
-        be_routes = [
-            {
-                "symbol_id": 10,
-                "url_pattern": "/users",
-                "http_method": "GET",
-                "file_path": "routes.php",
-                "line": 5,
-                "symbol_name": "index",
-            }
-        ]
-        matches = match_api_endpoints(fe_calls, be_routes)
-        assert len(matches) == 1
-        assert matches[0]["score"] > 0.5
-
-    def test_param_match(self):
-        from roam.workspace.api_scanner import match_api_endpoints
-
-        fe_calls = [
-            {
-                "symbol_id": 1,
-                "url_pattern": "/users/${id}",
-                "http_method": "GET",
-                "file_path": "api.js",
-                "line": 1,
-                "symbol_name": "getUser",
-            }
-        ]
-        be_routes = [
-            {
-                "symbol_id": 10,
-                "url_pattern": "/users/{id}",
-                "http_method": "GET",
-                "file_path": "routes.php",
-                "line": 5,
-                "symbol_name": "show",
-            }
-        ]
-        matches = match_api_endpoints(fe_calls, be_routes)
-        assert len(matches) == 1
-
-    def test_no_match(self):
-        from roam.workspace.api_scanner import match_api_endpoints
-
-        fe_calls = [
-            {
-                "symbol_id": 1,
-                "url_pattern": "/users",
-                "http_method": "GET",
-                "file_path": "api.js",
-                "line": 1,
-                "symbol_name": "getUsers",
-            }
-        ]
-        be_routes = [
-            {
-                "symbol_id": 10,
-                "url_pattern": "/products",
-                "http_method": "GET",
-                "file_path": "routes.php",
-                "line": 5,
-                "symbol_name": "index",
-            }
-        ]
-        matches = match_api_endpoints(fe_calls, be_routes)
-        assert len(matches) == 0
-
-    def test_method_mismatch_excluded(self):
-        from roam.workspace.api_scanner import match_api_endpoints
-
-        fe_calls = [
-            {
-                "symbol_id": 1,
-                "url_pattern": "/users",
-                "http_method": "POST",
-                "file_path": "api.js",
-                "line": 1,
-                "symbol_name": "createUser",
-            }
-        ]
-        be_routes = [
-            {
-                "symbol_id": 10,
-                "url_pattern": "/users",
-                "http_method": "GET",
-                "file_path": "routes.php",
-                "line": 5,
-                "symbol_name": "index",
-            }
-        ]
-        matches = match_api_endpoints(fe_calls, be_routes)
-        assert len(matches) == 0
-
-    def test_api_prefix_stripped(self):
-        from roam.workspace.api_scanner import match_api_endpoints
-
-        fe_calls = [
-            {
-                "symbol_id": 1,
-                "url_pattern": "/api/users",
-                "http_method": "GET",
-                "file_path": "api.js",
-                "line": 1,
-                "symbol_name": "getUsers",
-            }
-        ]
-        be_routes = [
-            {
-                "symbol_id": 10,
-                "url_pattern": "/users",
-                "http_method": "GET",
-                "file_path": "routes.php",
-                "line": 5,
-                "symbol_name": "index",
-            }
-        ]
-        matches = match_api_endpoints(fe_calls, be_routes)
-        assert len(matches) == 1
-
-
-class TestBuildCrossEdges:
-    """Test storing matched edges in the workspace DB."""
-
-    def test_store_edges(self, tmp_path):
-        from roam.workspace.api_scanner import build_cross_repo_edges
-        from roam.workspace.db import get_cross_edges, open_workspace_db, upsert_repo
-
-        with open_workspace_db(tmp_path) as conn:
-            fe_id = upsert_repo(conn, "fe", "/fe", "frontend", "/fe/db")
-            be_id = upsert_repo(conn, "be", "/be", "backend", "/be/db")
-
-            matched = [
-                {
-                    "frontend": {
-                        "symbol_id": 1,
-                        "url_pattern": "/users",
-                        "file_path": "api.js",
-                        "line": 5,
-                        "symbol_name": "getUsers",
-                    },
-                    "backend": {
-                        "symbol_id": 10,
-                        "url_pattern": "/users",
-                        "file_path": "routes.php",
-                        "line": 3,
-                        "symbol_name": "index",
-                    },
-                    "url_pattern": "/users",
-                    "http_method": "GET",
-                    "score": 0.95,
-                }
-            ]
-
-            count = build_cross_repo_edges(conn, fe_id, be_id, matched)
-            assert count == 1
-
-            edges = get_cross_edges(conn)
-            assert len(edges) == 1
-            assert edges[0]["kind"] == "api_call"
-
-
-# ===================================================================
-# Phase 2: ws resolve integration
-# ===================================================================
-
-
-class TestWsResolve:
-    """Test `roam ws resolve` command."""
-
-    def test_ws_resolve(self, workspace_root):
-        # Re-init workspace
-        fe = workspace_root / "frontend"
-        be = workspace_root / "backend"
-        _run_roam(["ws", "init", str(fe), str(be), "--name", "resolve-test"], workspace_root)
-
-        result = _run_roam(["ws", "resolve"], workspace_root)
-        assert result.returncode == 0
-        assert "Scanning" in result.stdout
-
-    def test_ws_resolve_json(self, workspace_root):
-        result = _run_roam(["--json", "ws", "resolve"], workspace_root)
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-resolve"
-        assert "matches" in data
-
-
-# ===================================================================
-# Phase 3: Unified workspace commands
-# ===================================================================
-
-
-class TestAggregator:
-    """Test workspace aggregation functions."""
-
-    def test_aggregate_understand(self, tmp_path):
-        from roam.workspace.aggregator import aggregate_understand
-        from roam.workspace.db import open_workspace_db, upsert_repo
-
-        # Create a minimal repo DB
-        repo_dir = tmp_path / "repo"
-        repo_dir.mkdir()
-        roam_dir = repo_dir / ".roam"
-        roam_dir.mkdir()
-        db_path = roam_dir / "index.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, language TEXT, hash TEXT, mtime REAL, line_count INTEGER DEFAULT 0)"
-        )
-        conn.execute(
-            "CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified_name TEXT, kind TEXT, signature TEXT, line_start INTEGER, line_end INTEGER, docstring TEXT, visibility TEXT, is_exported INTEGER DEFAULT 1, parent_id INTEGER, default_value TEXT)"
-        )
-        conn.execute(
-            "CREATE TABLE edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT, line INTEGER)"
-        )
-        conn.execute("INSERT INTO files VALUES (1, 'main.py', 'python', 'abc', 0, 10)")
-        conn.execute(
-            "INSERT INTO symbols VALUES (1, 1, 'main', 'main', 'function', NULL, 1, 5, NULL, 'public', 1, NULL, NULL)"
-        )
-        conn.commit()
-        conn.close()
-
-        repo_infos = [
-            {
-                "name": "repo",
-                "path": str(repo_dir),
-                "role": "backend",
-                "db_path": db_path,
-            }
-        ]
-
-        with open_workspace_db(tmp_path) as ws_conn:
-            upsert_repo(ws_conn, "repo", str(repo_dir), "backend", str(db_path))
-            data = aggregate_understand(ws_conn, repo_infos)
-
-        assert data["total_files"] == 1
-        assert data["total_symbols"] == 1
-        assert len(data["repos"]) == 1
-        assert data["repos"][0]["name"] == "repo"
-
-    def test_cross_repo_context_not_found(self, tmp_path):
-        from roam.workspace.aggregator import cross_repo_context
-        from roam.workspace.db import open_workspace_db
-
-        with open_workspace_db(tmp_path) as ws_conn:
-            data = cross_repo_context(ws_conn, "nonexistent", [])
-
-        assert data["symbol"] == "nonexistent"
-        assert data["found_in"] == []
-
-    def test_cross_repo_trace_no_bridge(self, tmp_path):
-        from roam.workspace.aggregator import cross_repo_trace
-        from roam.workspace.db import open_workspace_db
-
-        with open_workspace_db(tmp_path) as ws_conn:
-            data = cross_repo_trace(ws_conn, "foo", "bar", [])
-
-        assert "not found" in data["verdict"].lower()
-
-
-class TestWsUnderstand:
-    """Test `roam ws understand` command."""
-
-    def test_ws_understand(self, workspace_root):
-        result = _run_roam(["ws", "understand"], workspace_root)
-        assert result.returncode == 0
-        assert "WORKSPACE" in result.stdout
-
-    def test_ws_understand_json(self, workspace_root):
-        result = _run_roam(["--json", "ws", "understand"], workspace_root)
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-understand"
-        assert "total_files" in data
-        assert "repos" in data
-
-
-class TestWsHealth:
-    """Test `roam ws health` command."""
-
-    def test_ws_health(self, workspace_root):
-        result = _run_roam(["ws", "health"], workspace_root)
-        assert result.returncode == 0
-        assert "VERDICT" in result.stdout
-
-    def test_ws_health_json(self, workspace_root):
-        result = _run_roam(["--json", "ws", "health"], workspace_root)
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-health"
-        assert "workspace_health" in data["summary"]
-
-
-class TestWsContext:
-    """Test `roam ws context` command."""
-
-    def test_ws_context_found(self, workspace_root):
-        # This may or may not find the symbol depending on indexing
-        result = _run_roam(["ws", "context", "fetchTransactions"], workspace_root)
-        assert result.returncode == 0
-
-    def test_ws_context_not_found(self, workspace_root):
-        result = _run_roam(["ws", "context", "nonexistent_symbol_xyz"], workspace_root)
-        assert result.returncode == 0
-        assert "not found" in result.stdout.lower()
-
-    def test_ws_context_json(self, workspace_root):
-        result = _run_roam(["--json", "ws", "context", "main"], workspace_root)
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-context"
-
-
-class TestWsTrace:
-    """Test `roam ws trace` command."""
-
-    def test_ws_trace(self, workspace_root):
-        result = _run_roam(["ws", "trace", "TransactionStore", "TransactionController"], workspace_root)
-        assert result.returncode == 0
-        assert "VERDICT" in result.stdout
-
-    def test_ws_trace_json(self, workspace_root):
-        result = _run_roam(
-            ["--json", "ws", "trace", "foo", "bar"],
-            workspace_root,
-        )
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert data["command"] == "ws-trace"
-        assert "verdict" in data["summary"]
-
-
-# ===================================================================
-# Formatter helpers
-# ===================================================================
-
-
-class TestFormatterHelpers:
-    """Test workspace-specific formatter additions."""
-
-    def test_ws_loc(self):
-        from roam.output.formatter import ws_loc
-
-        assert ws_loc("fe", "src/api.js", 10) == "[fe] src/api.js:10"
-        assert ws_loc("be", "routes.php") == "[be] routes.php"
-
-    def test_ws_json_envelope(self):
-        from roam.output.formatter import ws_json_envelope
-
-        env = ws_json_envelope("ws-test", "my-workspace", summary={"verdict": "ok"})
-        assert env["command"] == "ws-test"
-        assert env["workspace"] == "my-workspace"
-        assert env["summary"]["verdict"] == "ok"
+
+def _make_project(tmp_path: Path, name: str, with_index: bool = True) -> Path:
+    """辅助: 创建模拟项目目录"""
+    proj = tmp_path / name
+    proj.mkdir(parents=True, exist_ok=True)
+    if with_index:
+        roam_dir = proj / ".roam"
+        roam_dir.mkdir(exist_ok=True)
+        (roam_dir / "index.db").write_text("")  # 空 DB 占位
+    return proj
+
+
+class TestParseWorkspace:
+    """REQ-21: 工作区文件解析"""
+
+    def test_parse_valid(self, tmp_path):
+        ws_path = _write_workspace(tmp_path / "test.code-workspace", ["proj-a", "proj-b"])
+        _make_project(tmp_path, "proj-a")
+        _make_project(tmp_path, "proj-b")
+
+        projects = parse_workspace(ws_path)
+        assert len(projects) == 2
+        names = {p.name for p in projects}
+        assert names == {"proj-a", "proj-b"}
+
+    def test_parse_relative_paths_resolved(self, tmp_path):
+        """相对路径 → 解析为绝对路径"""
+        ws_path = _write_workspace(tmp_path / "test.code-workspace", ["sub/proj"])
+        _make_project(tmp_path, "sub/proj")
+
+        projects = parse_workspace(ws_path)
+        assert len(projects) == 1
+        assert projects[0].root.is_absolute()
+
+    def test_parse_detects_index(self, tmp_path):
+        """正确检测 .roam/index.db 是否存在"""
+        ws_path = _write_workspace(tmp_path / "test.code-workspace", ["has-index", "no-index"])
+        _make_project(tmp_path, "has-index", with_index=True)
+        _make_project(tmp_path, "no-index", with_index=False)
+
+        projects = parse_workspace(ws_path)
+        assert len(projects) == 2
+        has = [p for p in projects if p.name == "has-index"][0]
+        no = [p for p in projects if p.name == "no-index"][0]
+        assert has.has_index is True
+        assert no.has_index is False
+
+    def test_parse_invalid_json(self, tmp_path):
+        ws_path = tmp_path / "bad.code-workspace"
+        ws_path.write_text("not json")
+
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            parse_workspace(ws_path)
+
+    def test_parse_empty_folders(self, tmp_path):
+        ws_path = _write_workspace(tmp_path / "empty.code-workspace", [])
+
+        projects = parse_workspace(ws_path)
+        assert projects == []
+
+    def test_parse_missing_project_dir(self, tmp_path):
+        """工作区引用不存在的目录 → 仍返回但 has_index=False"""
+        ws_path = _write_workspace(tmp_path / "test.code-workspace", ["ghost"])
+
+        projects = parse_workspace(ws_path)
+        assert len(projects) == 1
+        assert projects[0].has_index is False
+
+
+class TestDiscoverWorkspace:
+    """REQ-23: 自动发现工作区"""
+
+    def test_discover_in_current_dir(self, tmp_path):
+        ws_path = _write_workspace(tmp_path / "project.code-workspace", ["proj"])
+
+        found = discover_workspace(tmp_path)
+        assert found == ws_path.resolve()
+
+    def test_discover_in_parent_dir(self, tmp_path):
+        ws_path = _write_workspace(tmp_path / "project.code-workspace", ["proj"])
+        child = tmp_path / "deep" / "sub"
+        child.mkdir(parents=True)
+
+        found = discover_workspace(child)
+        assert found == ws_path.resolve()
+
+    def test_discover_none_found(self, tmp_path):
+        found = discover_workspace(tmp_path)
+        assert found is None
+
+    def test_discover_multiple_returns_first(self, tmp_path):
+        """多个工作区文件时返回第一个找到的"""
+        _write_workspace(tmp_path / "a.code-workspace", ["a"])
+        _write_workspace(tmp_path / "b.code-workspace", ["b"])
+
+        found = discover_workspace(tmp_path)
+        assert found is not None
+
+
+class TestResolveWorkspace:
+    """统一入口"""
+
+    def test_explicit_path_takes_priority(self, tmp_path):
+        """显式指定 --workspace 时不触发自动发现"""
+        ws1 = _write_workspace(tmp_path / "explicit.code-workspace", ["proj-a"])
+        _make_project(tmp_path, "proj-a")
+        _write_workspace(tmp_path / "auto.code-workspace", ["proj-b"])
+
+        projects = resolve_workspace(str(ws1))
+        assert len(projects) == 1
+        assert projects[0].name == "proj-a"
+
+    def test_no_workspace_falls_back_to_single(self):
+        """无工作区文件 → 空列表（调者降级为单项目模式）"""
+        with tempfile.TemporaryDirectory() as td:
+            projects = resolve_workspace(workspace_path=None, start_dir=td)
+            assert projects == []

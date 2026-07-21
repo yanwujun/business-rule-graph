@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os as _os
 import sqlite3
+from pathlib import Path
 
 import click
 
@@ -17,25 +18,26 @@ def _get_db_path():
     return f"{root}/.roam/index.db"
 
 
-@click.command("business-rules-extract")
-@click.option("--update", is_flag=True, help="Incremental: only changed files")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-@click.option("--project-root", default=None, help="Project root (default: auto-detect)")
-def cmd_br_extract(update=False, as_json=False, project_root=None):
-    """Extract business rules from Java/Spring Boot code (AST engine)"""
+def _resolve_projects(workspace):
+    """解析工作区项目列表。无 --workspace 时返回空列表（单项目模式）。"""
+    if workspace:
+        from roam.business_rules.workspace import resolve_workspace
+        return resolve_workspace(workspace)
+    return []
+
+
+def _extract_one(project_root, update=False):
+    """对单个项目执行 AST 规则提取，返回规则列表"""
     from roam.business_rules.extractor import BusinessRuleExtractor
 
-    root = project_root or _root()
-    db_path = f"{root}/.roam/index.db"
+    db_path = str(project_root / ".roam" / "index.db")
     if not _os.path.exists(db_path):
-        click.echo("Error: No index found. Run 'roam init' first.", err=True)
-        return
+        return None, "No index found"
 
-    extractor = BusinessRuleExtractor(project_root=root)
+    extractor = BusinessRuleExtractor(project_root=str(project_root))
     rules = extractor.extract_from_db(db_path, incremental=update)
     if not rules:
-        click.echo("No business rules detected.")
-        return
+        return [], "No rules"
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("DELETE FROM business_rules WHERE 1=1")
@@ -49,16 +51,83 @@ def cmd_br_extract(update=False, as_json=False, project_root=None):
              r.compute_hash(), r.extraction) for r in rules
         ])
         conn.commit()
+    return rules, None
 
-    by_type = {}
-    for r in rules:
-        by_type[r.rule_type.value] = by_type.get(r.rule_type.value, 0) + 1
-    if as_json:
-        click.echo(json.dumps({"total": len(rules), "by_type": by_type}, indent=2, ensure_ascii=False))
+
+@click.command("business-rules-extract")
+@click.option("--update", is_flag=True, help="Incremental: only changed files")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--project-root", default=None, help="Project root (default: auto-detect)")
+@click.option("--workspace", default=None, help=".code-workspace file for multi-root analysis")
+def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=None):
+    """Extract business rules from Java/Spring Boot code (AST engine)"""
+    projects = _resolve_projects(workspace)
+
+    if projects:
+        # 多项目模式
+        all_results = []
+        for proj in projects:
+            if not proj.has_index:
+                click.echo(f"  {proj.name:<20} [SKIP] No index (run 'roam init' first)", err=True)
+                all_results.append({"project": proj.name, "total": 0, "status": "skipped"})
+                continue
+            rules, err = _extract_one(proj.root, update=update)
+            if err:
+                click.echo(f"  {proj.name:<20} {err}")
+                all_results.append({"project": proj.name, "total": 0, "status": err})
+            else:
+                by_type = {}
+                for r in rules:
+                    by_type[r.rule_type.value] = by_type.get(r.rule_type.value, 0) + 1
+                all_results.append({"project": proj.name, "total": len(rules), "by_type": by_type, "status": "ok"})
+                click.echo(f"  {proj.name:<20} {len(rules)} rules")
+
+        total_rules = sum(r["total"] for r in all_results)
+        active = [r for r in all_results if r["status"] == "ok"]
+        if as_json:
+            click.echo(json.dumps({"workspace_projects": len(projects), "total_rules": total_rules,
+                                   "projects": all_results}, indent=2, ensure_ascii=False))
+        else:
+            click.echo(f"\nWorkspace: {len(active)} projects active, {total_rules} total rules")
+
     else:
-        click.echo(f"Extracted {len(rules)} business rules (AST)")
-        for rt, count in sorted(by_type.items()):
-            click.echo(f"  {rt}: {count}")
+        # 单项目模式（原有逻辑）
+        from roam.business_rules.extractor import BusinessRuleExtractor
+
+        root = project_root or _root()
+        db_path = f"{root}/.roam/index.db"
+        if not _os.path.exists(db_path):
+            click.echo("Error: No index found. Run 'roam init' first.", err=True)
+            return
+
+        extractor = BusinessRuleExtractor(project_root=root)
+        rules = extractor.extract_from_db(db_path, incremental=update)
+        if not rules:
+            click.echo("No business rules detected.")
+            return
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM business_rules WHERE 1=1")
+            conn.executemany("""INSERT OR REPLACE INTO business_rules
+                (rule_id, rule_type, domain, flow, description, severity,
+                 source_file, source_line, source_symbol, params, annotations, hash, extraction)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", [
+                (r.rule_id, r.rule_type.value, r.domain, r.flow, r.description, r.severity.value,
+                 r.source_file, r.source_line, r.source_symbol,
+                 json.dumps(r.params, ensure_ascii=False), json.dumps(r.annotations, ensure_ascii=False),
+                 r.compute_hash(), r.extraction) for r in rules
+            ])
+            conn.commit()
+
+        by_type = {}
+        for r in rules:
+            by_type[r.rule_type.value] = by_type.get(r.rule_type.value, 0) + 1
+        if as_json:
+            click.echo(json.dumps({"total": len(rules), "by_type": by_type}, indent=2, ensure_ascii=False))
+        else:
+            click.echo(f"Extracted {len(rules)} business rules (AST)")
+            for rt, count in sorted(by_type.items()):
+                click.echo(f"  {rt}: {count}")
 
 
 @click.command("business-rules-summarize")
@@ -111,44 +180,66 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
 @click.command("business-rules-graph")
 @click.option("--stats", is_flag=True, help="Show statistics only")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def cmd_br_graph(stats=False, as_json=False):
+@click.option("--workspace", default=None, help=".code-workspace file for multi-root analysis")
+def cmd_br_graph(stats=False, as_json=False, workspace=None):
     """Build/rebuild business rule knowledge graph"""
     from roam.business_rules.graph import RuleGraph
 
-    db_path = _get_db_path()
-    graph = RuleGraph(db_path)
-    if stats:
-        s = graph.stats()
-        click.echo(json.dumps(s, indent=2) if as_json else f"Rules: {s['rules']}  Edges: {s['edges']}")
-    else:
-        result = graph.build()
-        if as_json:
-            click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    projects = _resolve_projects(workspace)
+    target_dbs = [str(p.db_path) for p in projects] if projects else [_get_db_path()]
+
+    for db_path in target_dbs:
+        if not _os.path.exists(db_path):
+            continue
+        graph = RuleGraph(db_path)
+        if stats:
+            s = graph.stats()
+            click.echo(json.dumps(s, indent=2) if as_json else f"Rules: {s['rules']}  Edges: {s['edges']}")
         else:
-            click.echo(f"Graph built: {result['total_edges']} edges")
-            for et, n in sorted(result["by_type"].items()):
-                click.echo(f"  {et}: {n}")
+            result = graph.build()
+            if as_json:
+                click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                click.echo(f"Graph built: {result['total_edges']} edges")
+                for et, n in sorted(result["by_type"].items()):
+                    click.echo(f"  {et}: {n}")
 
 
 @click.command("business-rules-check")
 @click.option("--snapshot-id", type=int, default=None)
 @click.option("--json", "as_json", is_flag=True)
-def cmd_br_check(snapshot_id=None, as_json=False):
+@click.option("--workspace", default=None, help=".code-workspace file for multi-root analysis")
+def cmd_br_check(snapshot_id=None, as_json=False, workspace=None):
     """Detect business rule conflicts"""
     from roam.business_rules.conflict import ConflictDetector
 
-    db_path = _get_db_path()
-    detector = ConflictDetector(db_path)
-    conflicts = detector.detect(previous_snapshot_id=snapshot_id)
+    projects = _resolve_projects(workspace)
+    all_conflicts = []
+
+    target_dbs = [p.db_path for p in projects] if projects else [_get_db_path()]
+
+    for db_path in target_dbs:
+        db_path = str(db_path)
+        if not _os.path.exists(db_path):
+            continue
+        detector = ConflictDetector(db_path)
+        conflicts = detector.detect(previous_snapshot_id=snapshot_id)
+        proj_tag = ""
+        if projects and len(projects) > 1:
+            proj_name = Path(db_path).parent.parent.name if str(db_path) != _get_db_path() else ""
+            proj_tag = f"[{proj_name}] " if proj_name else ""
+        for c in conflicts:
+            all_conflicts.append((proj_tag, c))
+
     if as_json:
-        click.echo(json.dumps([{"type": c.conflict_type, "severity": c.severity, "description": c.description,
-                                "rule_a": c.rule_a, "rule_b": c.rule_b} for c in conflicts],
-                              indent=2, ensure_ascii=False))
-    elif not conflicts:
+        click.echo(json.dumps([{"source": ptag, "type": c.conflict_type, "severity": c.severity,
+                                "description": c.description, "rule_a": c.rule_a, "rule_b": c.rule_b}
+                               for ptag, c in all_conflicts], indent=2, ensure_ascii=False))
+    elif not all_conflicts:
         click.echo("No conflicts detected.")
     else:
-        for c in conflicts:
-            click.echo(f"[{c.severity.upper()}] {c.conflict_type}: {c.description}")
+        for ptag, c in all_conflicts:
+            click.echo(f"{ptag}[{c.severity.upper()}] {c.conflict_type}: {c.description}")
 
 
 @click.command("business-rules-diff")

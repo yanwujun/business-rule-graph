@@ -1,16 +1,16 @@
 <div align="center">
 
-# roam-code
+# business-rule-graph
 
-**The local codebase intelligence layer that lets AI coding agents earn the right to change code — with evidence for what was checked.**
+**AI 修改代码后，自动判断是否引入业务规则冲突。**
 
-[![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
-[![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
-[![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
+*基于 [roam-code](https://github.com/Cranot/roam-code) v13 · AST 确定性引擎 + LLM 语义引擎 · 双引擎驱动*
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Base](https://img.shields.io/badge/base-roam--code%20v13-6e40c9)](https://github.com/Cranot/roam-code)
 
-<sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
+<sub>100% 本地 · AST 精确提取 + LLM 语义增强 · 规则图谱 + 冲突检测 · 支持多根工作区 · 兼容 SVN</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
 <sub>281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
@@ -23,21 +23,148 @@
 ---
 
 **Jump to** —
-[Why Roam](#why-roam-is-different) ·
-[Install](#install--first-four-commands) ·
-[The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer) ·
-[Core commands](#core-commands) ·
-[MCP server](#mcp-server) ·
-[AI-tool integration](#integration-with-ai-coding-tools) ·
-[Roam Guard (PR gate)](#roam-guard-for-prs) ·
-[Performance](#performance) ·
-[Compare](#how-roam-compares) ·
-[Pricing](#paid-layers-free-cli-stays-apache-20) ·
-[FAQ](#faq)
+[Business Rule Graph](#business-rule-graph) ·
+[Quick Start](#quick-start) ·
+[Multi-root Workspace](#multi-root-workspace) ·
+[Pipeline](#pipeline) ·
+[8 Rule Types](#rule-types) ·
+[Conflict Detection](#conflict-detection) ·
+[Install](#install) ·
+[Core commands](#core-commands)
 
 ---
 
-## Why Roam is different
+## Business Rule Graph
+
+> **核心问题：AI 帮我改了代码，有没有偷偷改掉业务规则？**
+
+`business-rule-graph` 在 roam-code 基础上新增 **双引擎业务规则分析**：
+
+```
+AST 引擎 (tree-sitter)              LLM 引擎 (OpenAI 兼容)
+  ├── 扫 if-throw 断言                ├── domain 业务域分类
+  ├── 方法命名约定                    ├── flow 业务流程分类
+  ├── 注解兜底                        ├── description 自然语言
+  └── 参数提取(精确)                  └── 语义归并(同规则合并)
+          │                                    │
+          └──────────────┬─────────────────────┘
+                         ▼
+                 规则图谱 (same_field / same_flow / conflicts_with)
+                         │
+                         ▼
+                 冲突检测 (阈值冲突 / 权限移除 / 状态机断裂)
+                         │
+                         ▼
+                 版本快照 (基线 → diff → 报告)
+```
+
+### Quick Start
+
+```bash
+# 对 Java/Spring Boot 项目
+roam init                                  # 建代码索引
+roam business-rules extract                # AST 提取规则
+roam business-rules summarize              # LLM 语义增强 (无 API key 自动降级)
+roam business-rules graph                  # 构建规则图谱
+roam business-rules snapshot --label "基线" # 创建基线
+
+# 改代码后
+roam business-rules extract --update       # 增量提取
+roam business-rules check                  # 冲突检测
+roam business-rules diff                   # 对比变更
+```
+
+### Pipeline
+
+| 命令 | 功能 | 输出 |
+|------|------|------|
+| `extract` | AST 扫描 Java 源码，识别 8 类业务规则 | 规则统计 + by_type |
+| `summarize` | LLM 补充业务域/流程/自然语言描述 | 增强数 + 归并数 |
+| `graph` | 构建规则间关系边 | 边统计(same_field/same_flow/conflicts_with) |
+| `check` | 检测阈值冲突/权限移除/状态机断裂 | 冲突清单 |
+| `snapshot` | 创建版本快照 | 快照 ID |
+| `diff` | 对比两个快照的规则变化 | +N/-M 变更摘要 |
+| `list` | 列出规则（支持 --type/--domain 过滤） | 规则表格 |
+| `explain` | 单条规则详情 + 关联规则 | 完整信息 + related |
+
+### Rule Types
+
+| 类型 | 检测方式 | 示例 |
+|------|----------|------|
+| `validation` | if-throw, @NotNull, @Min | 订单金额 >= 100 |
+| `authorization` | @PreAuthorize, @RolesAllowed | 审核员可审批 |
+| `workflow` | enum Status, setStatus() | DRAFT → SUBMITTED → APPROVED |
+| `calculation` | BigDecimal 运算 | 折扣 = 原价 × 0.8 |
+| `data_integrity` | existsBy, unique 约束 | 供应商编码唯一 |
+| `process` | @EventListener, 审批链 | 订单提交后触发审核 |
+| `configuration` | @Value, feature flag | 功能开关控制 |
+| `integration` | @Retryable, @CircuitBreaker | 外部支付接口容错 |
+
+### Conflict Detection
+
+```bash
+$ roam business-rules check
+
+[CRITICAL] threshold_mismatch: 字段 'total' 阈值不一致
+  OrderServiceImpl.java:145: >=100
+  PaymentService.java:89: >=50
+
+[HIGH] auth_removed: 权限规则被移除
+  AuditController.java:23:auth-annotation
+
+[MEDIUM] status_deadend: 状态 'APPROVED' 死端
+```
+
+### Multi-root Workspace
+
+对 `.code-workspace` 多项目工作区统一分析：
+
+```bash
+roam business-rules extract --workspace "框架协议后端.code-workspace"
+```
+
+输出按项目分组的统计：
+
+```text
+Workspace: 框架协议后端 (5 projects)
+────────────────────────────────────
+  xcj-trade        [Java]  312 rules
+  xcj-ezc          [Java]  198 rules
+  kjxy             [Vue]     0 business rules
+  kjxy-backstage   [Vue]     0 business rules
+  web              [Web]     0 business rules
+────────────────────────────────────
+  Total: 510 rules across 2 Java projects
+```
+
+跨项目冲突检测自动标注来源：
+
+```bash
+roam business-rules check --workspace "框架协议后端.code-workspace"
+
+[CRITICAL] threshold_mismatch: 字段 'total' 阈值不一致
+  xcj-trade/OrderServiceImpl.java:145: >=100
+  xcj-ezc/PaymentService.java:89: >=50
+```
+
+### MCP Tools (for AI Agents)
+
+| Tool | 功能 |
+|------|------|
+| `business_rules_extract` | AST 提取 |
+| `business_rules_summarize` | LLM 语义增强 |
+| `business_rules_graph` | 构建图谱 |
+| `business_rules_check` | 冲突检测 |
+| `business_rules_snapshot` | 创建快照 |
+| `business_rules_diff` | 对比快照 |
+
+### SVN 兼容
+
+增量提取 (`--update`) 基于文件 mtime 检测变更，不依赖 git diff。
+
+---
+
+## Why Roam (基座能力)
 
 [METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/) and [FrontierCode](https://cognition.ai/blog/frontier-code) both point at the same gap: passing tests is not the same as mergeable code. Roam is an **agent-first CLI surface** that gives the agent local graph facts before it edits, gates risky changes, and emits scoped evidence after the run. In the agent/review tools surveyed as of 2026-06-12, the differentiator is this combination:
 
