@@ -27,16 +27,27 @@ def _resolve_projects(workspace):
 
 
 def _extract_one(project_root, update=False):
-    """对单个项目执行 AST 规则提取，返回规则列表"""
+    """对单个项目执行规则提取（Java + 前端），返回规则列表"""
     from roam.business_rules.extractor import BusinessRuleExtractor
+    from roam.business_rules.frontend_extractor import FrontendExtractor
 
     db_path = str(project_root / ".roam" / "index.db")
     if not _os.path.exists(db_path):
         return None, "No index found"
 
+    all_rules = []
+
+    # Java 后端规则
     extractor = BusinessRuleExtractor(project_root=str(project_root))
-    rules = extractor.extract_from_db(db_path, incremental=update)
-    if not rules:
+    java_rules = extractor.extract_from_db(db_path, incremental=update)
+    all_rules.extend(java_rules)
+
+    # 前端规则
+    frontend = FrontendExtractor(project_root=str(project_root))
+    fe_rules = frontend.extract_from_db(db_path, incremental=update)
+    all_rules.extend(fe_rules)
+
+    if not all_rules:
         return [], "No rules"
 
     with sqlite3.connect(db_path) as conn:
@@ -48,10 +59,10 @@ def _extract_one(project_root, update=False):
             (r.rule_id, r.rule_type.value, r.domain, r.flow, r.description, r.severity.value,
              r.source_file, r.source_line, r.source_symbol,
              json.dumps(r.params, ensure_ascii=False), json.dumps(r.annotations, ensure_ascii=False),
-             r.compute_hash(), r.extraction) for r in rules
+             r.compute_hash(), r.extraction) for r in all_rules
         ])
         conn.commit()
-    return rules, None
+    return all_rules, None
 
 
 @click.command("business-rules-extract")
