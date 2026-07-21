@@ -301,6 +301,14 @@ class BusinessRuleExtractor:
                     break
         return rules
 
+    # ---- MyBatis / Redis extraction ----
+
+    def _extract_mybatis_redis(
+        self, source: bytes, file_path: str, domain: str
+    ) -> list[BusinessRule]:
+        """MyBatis Mapper 方法 + Redis 关键词检测（预留，当前返回空）"""
+        return []
+
     # ---- annotation extraction ----
 
     def _extract_annotations(
