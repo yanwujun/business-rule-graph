@@ -93,6 +93,75 @@ class RuleSummarizer:
             all_results.extend(result)
         return all_results
 
+    def export_for_agent(self, rules: list[dict], batch_size: int = 50) -> str:
+        """导出为 Agent 可处理的 prompt JSON（用于 --agent 模式）
+
+        输出结构:
+        {
+          "system": "<SYSTEM_PROMPT>",
+          "batches": [
+            {"batch": 1, "rules": [...]},
+            ...
+          ],
+          "instruction": "对每个 batch 的 rules 调用 LLM，输出 {rules: [...]}，写回文件后执行 --agent-apply"
+        }
+        """
+        slim_batches = []
+        total = len(rules)
+        n_batches = (total + batch_size - 1) // batch_size
+
+        for i in range(0, total, batch_size):
+            batch = rules[i : i + batch_size]
+            slim = []
+            for r in batch:
+                slim.append({
+                    "rule_id": r.get("rule_id", ""),
+                    "source_file": r.get("source_file", ""),
+                    "source_line": r.get("source_line", 0),
+                    "rule_type": r.get("rule_type", "validation"),
+                    "exception_message": r.get("exception_message", "") or (
+                        (r.get("params", {}) or {}).get("exception_message", "")
+                    ),
+                    "status_value": r.get("status_value", "") or (
+                        (r.get("params", {}) or {}).get("status_value", "")
+                    ),
+                    "enum_values": r.get("enum_values", []) or (
+                        (r.get("params", {}) or {}).get("enum_values", [])
+                    ),
+                    "extraction": r.get("extraction", ""),
+                })
+            slim_batches.append({
+                "batch": i // batch_size + 1,
+                "total_batches": n_batches,
+                "rules": slim,
+            })
+
+        return json.dumps({
+            "system": SYSTEM_PROMPT.strip(),
+            "batches": slim_batches,
+            "instruction": (
+                "对每个 batch，用 system prompt 指引 LLM 输出 JSON: "
+                '{"rules": [{"rule_id":"...","domain":"...","flow":"...",'
+                '"description":"...","severity":"...","merge_with":null}, ...]}。'
+                "将所有 batch 的结果合并到一个 JSON 文件 "
+                '(格式: {"rules": [...]})，'
+                "然后执行 roam business-rules-summarize --agent-apply <文件路径>"
+            ),
+        }, ensure_ascii=False, indent=2)
+
+    def apply_agent_result(self, rules: list[dict], response_path: str) -> list[dict]:
+        """读取 Agent 返回的 LLM 结果文件，合并回规则（用于 --agent-apply 模式）"""
+        with open(response_path, "r", encoding="utf-8") as f:
+            response = json.load(f)
+
+        result_rules = response.get("rules", [])
+        if not result_rules:
+            raise ValueError(f"No 'rules' found in agent response: {response_path}")
+
+        logger.info("Applying %d agent-enriched rules to %d original rules",
+                     len(result_rules), len(rules))
+        return self._merge_results(rules, result_rules)
+
     def _call_llm(self, rules: list[dict]) -> list[dict]:
         """调用 LLM API"""
         import requests

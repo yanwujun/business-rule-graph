@@ -147,11 +147,18 @@ def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=Non
 @click.option("--model", default=None, help="LLM model name")
 @click.option("--batch-size", default=50, help="Rules per LLM call")
 @click.option("--json", "as_json", is_flag=True)
-def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_json=False):
+@click.option("--agent", is_flag=True, help="Export prompt for agent LLM (Cursor/Hermes)")
+@click.option("--agent-apply", "agent_apply", default=None, help="Apply agent LLM response file to DB")
+def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_json=False,
+                     agent=False, agent_apply=None):
     """LLM semantic enrichment — add business context to extracted rules"""
     from roam.business_rules.summarizer import RuleSummarizer
 
     db_path = _get_db_path()
+    if not _os.path.exists(db_path):
+        click.echo("No index found. Run 'roam init' first.", err=True)
+        return
+
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM business_rules ORDER BY source_file, source_line").fetchall()
@@ -170,7 +177,18 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
         r.setdefault("enum_values", r["params"].get("enum_values", []))
 
     summarizer = RuleSummarizer(api_key=api_key, base_url=base_url, model=model)
-    enriched = summarizer.summarize(rules, batch_size=batch_size)
+
+    # --agent 模式: 导出 prompt
+    if agent:
+        prompt = summarizer.export_for_agent(rules, batch_size=batch_size)
+        click.echo(prompt)
+        return
+
+    # --agent-apply 模式: 应用 Agent 结果
+    if agent_apply:
+        enriched = summarizer.apply_agent_result(rules, agent_apply)
+    else:
+        enriched = summarizer.summarize(rules, batch_size=batch_size)
 
     with sqlite3.connect(db_path) as conn:
         for r in enriched:
