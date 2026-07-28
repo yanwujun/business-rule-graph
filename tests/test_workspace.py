@@ -2,15 +2,16 @@
 
 覆盖: parse_workspace / discover_workspace / resolve_workspace
 """
+
 import json
 import tempfile
 from pathlib import Path
 
 import pytest
+
 from roam.business_rules.workspace import (
-    WorkspaceProject,
-    parse_workspace,
     discover_workspace,
+    parse_workspace,
     resolve_workspace,
 )
 

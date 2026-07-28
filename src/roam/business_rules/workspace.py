@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WorkspaceProject:
     """工作区中的一个项目"""
-    name: str                      # 目录名（如 "xcj-trade"）
-    root: Path                     # 绝对路径
-    db_path: Path                  # .roam/index.db 路径
-    has_index: bool = False        # 是否已 roam init
-    workspace_name: str = ""       # 所属工作区文件名
+
+    name: str  # 目录名（如 "xcj-trade"）
+    root: Path  # 绝对路径
+    db_path: Path  # .roam/index.db 路径
+    has_index: bool = False  # 是否已 roam init
+    workspace_name: str = ""  # 所属工作区文件名
 
 
 def parse_workspace(ws_path: str | Path) -> list[WorkspaceProject]:
@@ -46,7 +47,7 @@ def parse_workspace(ws_path: str | Path) -> list[WorkspaceProject]:
 
     folders = data.get("folders", [])
     if not isinstance(folders, list):
-        raise ValueError(f"Invalid workspace format: 'folders' must be a list")
+        raise ValueError("Invalid workspace format: 'folders' must be a list")
 
     ws_dir = ws_path.parent
     ws_name = ws_path.stem
@@ -64,13 +65,15 @@ def parse_workspace(ws_path: str | Path) -> list[WorkspaceProject]:
         has_index = db_path.exists()
         name = root.name or rel_path.rstrip("/").split("/")[-1]
 
-        projects.append(WorkspaceProject(
-            name=name,
-            root=root,
-            db_path=db_path,
-            has_index=has_index,
-            workspace_name=ws_name,
-        ))
+        projects.append(
+            WorkspaceProject(
+                name=name,
+                root=root,
+                db_path=db_path,
+                has_index=has_index,
+                workspace_name=ws_name,
+            )
+        )
 
     logger.info("Parsed workspace %s: %d projects", ws_name, len(projects))
     return projects

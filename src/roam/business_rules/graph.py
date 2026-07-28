@@ -3,11 +3,11 @@
 Layer 1: 规则 → 代码溯源 (business_rule_code_edges)
 Layer 2: 规则 → 规则关系 (business_rule_edges)
 """
+
 from __future__ import annotations
 
-import json
-import sqlite3
 import logging
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class RuleGraph:
 
     def build(self) -> dict:
         from .loader import load_rules
+
         rules = load_rules(self.db_path)
         edges: list[tuple[str, str, str]] = []
 
@@ -49,11 +50,14 @@ class RuleGraph:
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM business_rule_edges")
-            conn.executemany("""
+            conn.executemany(
+                """
                 INSERT INTO business_rule_edges(source_rule_id, target_rule_id, edge_type)
                 SELECT br1.id, br2.id, ? FROM business_rules br1, business_rules br2
                 WHERE br1.rule_id=? AND br2.rule_id=?
-            """, [(et, s, t) for s, t, et in edges])
+            """,
+                [(et, s, t) for s, t, et in edges],
+            )
             conn.commit()
 
         by_type = {}
@@ -66,8 +70,7 @@ class RuleGraph:
         by_field: dict[str, list[dict]] = {}
         for r in rules:
             p = r.get("params", {})
-            field = (p.get("field") or p.get("value") or p.get("status_value")
-                     or p.get("exception_message"))
+            field = p.get("field") or p.get("value") or p.get("status_value") or p.get("exception_message")
             if field:
                 by_field.setdefault(str(field)[:60], []).append(r)
         for items in by_field.values():
@@ -91,7 +94,8 @@ class RuleGraph:
     def related(self, rule_id: str) -> list[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT br.rule_id, br.rule_type, br.domain, br.description,
                        bre.edge_type
                 FROM business_rule_edges bre
@@ -99,5 +103,7 @@ class RuleGraph:
                     (bre.target_rule_id = br.id AND bre.source_rule_id = (SELECT id FROM business_rules WHERE rule_id=?))
                     OR (bre.source_rule_id = br.id AND bre.target_rule_id = (SELECT id FROM business_rules WHERE rule_id=?))
                 )
-            """, (rule_id, rule_id)).fetchall()
+            """,
+                (rule_id, rule_id),
+            ).fetchall()
         return [dict(r) for r in rows]

@@ -1,10 +1,10 @@
 """规则版本快照 — 支持创建和 diff 比对"""
+
 from __future__ import annotations
 
 import json
-import sqlite3
 import logging
-from pathlib import Path
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +19,12 @@ class RuleSnapshot:
             conn.row_factory = sqlite3.Row
 
             current = {
-                r["rule_id"]: r["hash"]
-                for r in conn.execute(
-                    "SELECT rule_id, hash FROM business_rules"
-                ).fetchall()
+                r["rule_id"]: r["hash"] for r in conn.execute("SELECT rule_id, hash FROM business_rules").fetchall()
             }
             current_ids = set(current.keys())
 
             last = conn.execute(
-                "SELECT id, added_rules FROM business_rule_snapshots "
-                "ORDER BY id DESC LIMIT 1"
+                "SELECT id, added_rules FROM business_rule_snapshots ORDER BY id DESC LIMIT 1"
             ).fetchone()
 
             prev_ids: set[str] = set()
@@ -48,16 +44,22 @@ class RuleSnapshot:
                     # hash comparison requires previous snapshot's hash map
                     pass
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO business_rule_snapshots
                     (label, git_commit, rule_count,
                      added_rules, removed_rules, modified_rules)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                label, commit, len(current),
-                json.dumps(added), json.dumps(removed),
-                json.dumps(modified),
-            ))
+            """,
+                (
+                    label,
+                    commit,
+                    len(current),
+                    json.dumps(added),
+                    json.dumps(removed),
+                    json.dumps(modified),
+                ),
+            )
             conn.commit()
             sid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 

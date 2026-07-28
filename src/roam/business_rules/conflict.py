@@ -1,9 +1,10 @@
 """冲突检测引擎 — 纯计算，零 LLM"""
+
 from __future__ import annotations
 
 import json
-import sqlite3
 import logging
+import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
@@ -33,6 +34,7 @@ class ConflictDetector:
 
     def _threshold_mismatch(self) -> list[Conflict]:
         from .loader import load_rules
+
         rules = load_rules(self.db_path)
         results = []
         groups: dict[tuple, list[dict]] = {}
@@ -55,17 +57,33 @@ class ConflictDetector:
                     ta, tb = items[i]["threshold"], items[j]["threshold"]
                     if ta != tb:
                         ra, rb = items[i]["rule"], items[j]["rule"]
-                        results.append(Conflict("threshold_mismatch", "critical",
-                            {"rule_id": ra["rule_id"], "source_file": ra["source_file"],
-                             "source_line": ra["source_line"], "description": ra["description"], "threshold": ta},
-                            {"rule_id": rb["rule_id"], "source_file": rb["source_file"],
-                             "source_line": rb["source_line"], "description": rb["description"], "threshold": tb},
-                            f"字段 '{field}' 阈值不一致: {ta} ({ra['source_file']}:{ra['source_line']}) vs {tb} ({rb['source_file']}:{rb['source_line']})"))
+                        results.append(
+                            Conflict(
+                                "threshold_mismatch",
+                                "critical",
+                                {
+                                    "rule_id": ra["rule_id"],
+                                    "source_file": ra["source_file"],
+                                    "source_line": ra["source_line"],
+                                    "description": ra["description"],
+                                    "threshold": ta,
+                                },
+                                {
+                                    "rule_id": rb["rule_id"],
+                                    "source_file": rb["source_file"],
+                                    "source_line": rb["source_line"],
+                                    "description": rb["description"],
+                                    "threshold": tb,
+                                },
+                                f"字段 '{field}' 阈值不一致: {ta} ({ra['source_file']}:{ra['source_line']}) vs {tb} ({rb['source_file']}:{rb['source_line']})",
+                            )
+                        )
         return results
 
     def _status_deadend(self) -> list[Conflict]:
         """状态机断裂检测: 死端/孤立入口/不可达状态"""
         from .loader import load_rules
+
         rules = load_rules(self.db_path)
         results = []
         workflow_rules = [r for r in rules if r["rule_type"] == "workflow"]
@@ -97,13 +115,19 @@ class ConflictDetector:
             elif state not in all_to and state not in terminal_states:
                 pass  # 既无入也无出，后续枚举检测覆盖
 
-        for (f, t) in transitions:
+        for f, t in transitions:
             # 死端: t 被到达过但自身没有出边，且不是枚举中定义的终点状态
             is_end_state = any(t in states for states in enum_states.values() if t == states[-1])
             if t not in all_from and not is_end_state:
-                results.append(Conflict("status_deadend", "medium",
-                    {"rule_id": f"{f}→{t}", "description": f"状态转移 {f}→{t}"},
-                    None, f"状态 '{t}' 只有入边无出边，可能是死端状态"))
+                results.append(
+                    Conflict(
+                        "status_deadend",
+                        "medium",
+                        {"rule_id": f"{f}→{t}", "description": f"状态转移 {f}→{t}"},
+                        None,
+                        f"状态 '{t}' 只有入边无出边，可能是死端状态",
+                    )
+                )
 
         # 孤立入口: 状态有出边但无入边（非起点状态）
         for state in all_to:
@@ -111,18 +135,30 @@ class ConflictDetector:
                 # 检查是否为枚举定义的合法起点
                 is_start_state = any(state == states[0] for states in enum_states.values() if states)
                 if not is_start_state:
-                    results.append(Conflict("orphan_entry", "medium",
-                        {"rule_id": f"→{state}", "description": f"状态 '{state}'"},
-                        None, f"状态 '{state}' 有入边但无出边，且不是枚举定义起点，可能是孤立入口"))
+                    results.append(
+                        Conflict(
+                            "orphan_entry",
+                            "medium",
+                            {"rule_id": f"→{state}", "description": f"状态 '{state}'"},
+                            None,
+                            f"状态 '{state}' 有入边但无出边，且不是枚举定义起点，可能是孤立入口",
+                        )
+                    )
 
         for rid, states in enum_states.items():
             if len(states) < 2:
                 continue
             for s in states:
                 if s not in all_from and s not in all_to:
-                    results.append(Conflict("status_deadend", "medium",
-                        {"rule_id": rid, "description": f"状态枚举: {', '.join(states)}"},
-                        None, f"状态 '{s}' 从未被任何规则引用或产生"))
+                    results.append(
+                        Conflict(
+                            "status_deadend",
+                            "medium",
+                            {"rule_id": rid, "description": f"状态枚举: {', '.join(states)}"},
+                            None,
+                            f"状态 '{s}' 从未被任何规则引用或产生",
+                        )
+                    )
 
         return results
 
@@ -130,9 +166,7 @@ class ConflictDetector:
         results = []
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            snap = conn.execute(
-                "SELECT * FROM business_rule_snapshots WHERE id=?", (snapshot_id,)
-            ).fetchone()
+            snap = conn.execute("SELECT * FROM business_rule_snapshots WHERE id=?", (snapshot_id,)).fetchone()
             if not snap:
                 return []
             try:
@@ -154,6 +188,13 @@ class ConflictDetector:
                     continue
                 old = conn.execute("SELECT * FROM business_rules WHERE rule_id=?", (rid,)).fetchone()
                 if old and old["rule_type"] == "authorization":
-                    results.append(Conflict("auth_removed", "high", dict(old), None,
-                        f"权限规则被移除: {rid} ({old['source_file']}:{old['source_line']})"))
+                    results.append(
+                        Conflict(
+                            "auth_removed",
+                            "high",
+                            dict(old),
+                            None,
+                            f"权限规则被移除: {rid} ({old['source_file']}:{old['source_line']})",
+                        )
+                    )
         return results

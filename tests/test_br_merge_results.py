@@ -2,7 +2,7 @@
 
 验证 _merge_results 正确合并 LLM 结果到原始规则。
 """
-import pytest
+
 from roam.business_rules.summarizer import RuleSummarizer
 
 
@@ -18,7 +18,13 @@ class TestMergeResults:
             for i in range(200)
         ]
         results = [
-            {"rule_id": f"rule_{i}", "domain": "订单管理", "flow": "下单", "description": f"规则{i}", "severity": "high"}
+            {
+                "rule_id": f"rule_{i}",
+                "domain": "订单管理",
+                "flow": "下单",
+                "description": f"规则{i}",
+                "severity": "high",
+            }
             for i in range(200)
         ]
 

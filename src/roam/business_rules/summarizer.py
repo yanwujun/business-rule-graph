@@ -10,6 +10,7 @@
 调用策略: 一次 extract 后做一次批量 summarize，不是每个文件都调。
 无 API key 时降级为模板生成。
 """
+
 from __future__ import annotations
 
 import json
@@ -71,9 +72,7 @@ class RuleSummarizer:
         )
         self.model = model or os.environ.get("LLM_MODEL", "gpt-4.1-mini")
 
-    def summarize(
-        self, rules: list[dict], batch_size: int = 50
-    ) -> list[dict]:
+    def summarize(self, rules: list[dict], batch_size: int = 50) -> list[dict]:
         """批量语义化，每批最多 50 条"""
         if not self.api_key:
             logger.info("No API key — using template fallback")
@@ -114,40 +113,44 @@ class RuleSummarizer:
             batch = rules[i : i + batch_size]
             slim = []
             for r in batch:
-                slim.append({
-                    "rule_id": r.get("rule_id", ""),
-                    "source_file": r.get("source_file", ""),
-                    "source_line": r.get("source_line", 0),
-                    "rule_type": r.get("rule_type", "validation"),
-                    "exception_message": r.get("exception_message", "") or (
-                        (r.get("params", {}) or {}).get("exception_message", "")
-                    ),
-                    "status_value": r.get("status_value", "") or (
-                        (r.get("params", {}) or {}).get("status_value", "")
-                    ),
-                    "enum_values": r.get("enum_values", []) or (
-                        (r.get("params", {}) or {}).get("enum_values", [])
-                    ),
-                    "extraction": r.get("extraction", ""),
-                })
-            slim_batches.append({
-                "batch": i // batch_size + 1,
-                "total_batches": n_batches,
-                "rules": slim,
-            })
+                slim.append(
+                    {
+                        "rule_id": r.get("rule_id", ""),
+                        "source_file": r.get("source_file", ""),
+                        "source_line": r.get("source_line", 0),
+                        "rule_type": r.get("rule_type", "validation"),
+                        "exception_message": r.get("exception_message", "")
+                        or ((r.get("params", {}) or {}).get("exception_message", "")),
+                        "status_value": r.get("status_value", "")
+                        or ((r.get("params", {}) or {}).get("status_value", "")),
+                        "enum_values": r.get("enum_values", []) or ((r.get("params", {}) or {}).get("enum_values", [])),
+                        "extraction": r.get("extraction", ""),
+                    }
+                )
+            slim_batches.append(
+                {
+                    "batch": i // batch_size + 1,
+                    "total_batches": n_batches,
+                    "rules": slim,
+                }
+            )
 
-        return json.dumps({
-            "system": SYSTEM_PROMPT.strip(),
-            "batches": slim_batches,
-            "instruction": (
-                "对每个 batch，用 system prompt 指引 LLM 输出 JSON: "
-                '{"rules": [{"rule_id":"...","domain":"...","flow":"...",'
-                '"description":"...","severity":"...","merge_with":null}, ...]}。'
-                "将所有 batch 的结果合并到一个 JSON 文件 "
-                '(格式: {"rules": [...]})，'
-                "然后执行 roam business-rules-summarize --agent-apply <文件路径>"
-            ),
-        }, ensure_ascii=False, indent=2)
+        return json.dumps(
+            {
+                "system": SYSTEM_PROMPT.strip(),
+                "batches": slim_batches,
+                "instruction": (
+                    "对每个 batch，用 system prompt 指引 LLM 输出 JSON: "
+                    '{"rules": [{"rule_id":"...","domain":"...","flow":"...",'
+                    '"description":"...","severity":"...","merge_with":null}, ...]}。'
+                    "将所有 batch 的结果合并到一个 JSON 文件 "
+                    '(格式: {"rules": [...]})，'
+                    "然后执行 roam business-rules-summarize --agent-apply <文件路径>"
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def apply_agent_result(self, rules: list[dict], response_path: str) -> list[dict]:
         """读取 Agent 返回的 LLM 结果文件，合并回规则（用于 --agent-apply 模式）"""
@@ -158,8 +161,7 @@ class RuleSummarizer:
         if not result_rules:
             raise ValueError(f"No 'rules' found in agent response: {response_path}")
 
-        logger.info("Applying %d agent-enriched rules to %d original rules",
-                     len(result_rules), len(rules))
+        logger.info("Applying %d agent-enriched rules to %d original rules", len(result_rules), len(rules))
         return self._merge_results(rules, result_rules)
 
     def _call_llm(self, rules: list[dict]) -> list[dict]:
@@ -169,16 +171,18 @@ class RuleSummarizer:
         # 精简输入：只传 LLM 需要的字段
         slim = []
         for r in rules:
-            slim.append({
-                "rule_id": r.get("rule_id", ""),
-                "source_file": r.get("source_file", ""),
-                "source_line": r.get("source_line", 0),
-                "rule_type": r.get("rule_type", "validation"),
-                "exception_message": r.get("exception_message", ""),
-                "status_value": r.get("status_value", ""),
-                "enum_values": r.get("enum_values", []),
-                "extraction": r.get("extraction", ""),
-            })
+            slim.append(
+                {
+                    "rule_id": r.get("rule_id", ""),
+                    "source_file": r.get("source_file", ""),
+                    "source_line": r.get("source_line", 0),
+                    "rule_type": r.get("rule_type", "validation"),
+                    "exception_message": r.get("exception_message", ""),
+                    "status_value": r.get("status_value", ""),
+                    "enum_values": r.get("enum_values", []),
+                    "extraction": r.get("extraction", ""),
+                }
+            )
 
         try:
             resp = requests.post(
@@ -248,6 +252,7 @@ class RuleSummarizer:
             # 推断 domain（从 source_file 的包名）
             if not r.get("domain"):
                 from .patterns import domain_from_package
+
                 pkg = r.get("source_file", "").replace("/", ".").replace(".java", "")
                 r["domain"] = domain_from_package(pkg)
             if not r.get("domain"):
@@ -256,6 +261,7 @@ class RuleSummarizer:
             # 推断 flow（从类名）
             if not r.get("flow"):
                 from .patterns import flow_from_class
+
                 r["flow"] = flow_from_class(r.get("source_symbol", ""))
             if not r.get("flow"):
                 r["flow"] = "通用流程"

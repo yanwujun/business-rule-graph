@@ -2,7 +2,7 @@
 
 覆盖: 无 API key 降级，domain/flow/description 生成正确性
 """
-import pytest
+
 from roam.business_rules.summarizer import RuleSummarizer
 
 
@@ -52,16 +52,18 @@ class TestTemplateFallback:
         """包名含 'order' → domain='订单管理'"""
         summarizer = RuleSummarizer()
 
-        rules = [{
-            "rule_id": "com.example.order.OrderService:145:if-throw",
-            "rule_type": "validation",
-            "source_file": "com/example/order/OrderService.java",
-            "source_line": 145,
-            "source_symbol": "validateOrder",
-            "params": {},
-            "domain": "",
-            "flow": "",
-        }]
+        rules = [
+            {
+                "rule_id": "com.example.order.OrderService:145:if-throw",
+                "rule_type": "validation",
+                "source_file": "com/example/order/OrderService.java",
+                "source_line": 145,
+                "source_symbol": "validateOrder",
+                "params": {},
+                "domain": "",
+                "flow": "",
+            }
+        ]
 
         enriched = summarizer._template_fallback(rules)
         assert enriched[0]["domain"] == "订单管理"
@@ -70,16 +72,18 @@ class TestTemplateFallback:
         """异常消息可用于生成 description"""
         summarizer = RuleSummarizer()
 
-        rules = [{
-            "rule_id": "com.example.order.OrderService:145:if-throw",
-            "rule_type": "validation",
-            "source_file": "com/example/order/OrderService.java",
-            "source_line": 145,
-            "source_symbol": "validateOrder",
-            "params": {"exception_message": "订单金额不能低于100元"},
-            "domain": "",
-            "flow": "",
-        }]
+        rules = [
+            {
+                "rule_id": "com.example.order.OrderService:145:if-throw",
+                "rule_type": "validation",
+                "source_file": "com/example/order/OrderService.java",
+                "source_line": 145,
+                "source_symbol": "validateOrder",
+                "params": {"exception_message": "订单金额不能低于100元"},
+                "domain": "",
+                "flow": "",
+            }
+        ]
 
         enriched = summarizer._template_fallback(rules)
         assert "100" in enriched[0]["description"] or "金额" in enriched[0]["description"]
@@ -88,16 +92,18 @@ class TestTemplateFallback:
         """无 API key 的 summarizer 调用 summarize → 走 fallback"""
         summarizer = RuleSummarizer()  # api_key=None
 
-        rules = [{
-            "rule_id": "test:1",
-            "rule_type": "validation",
-            "source_file": "test.java",
-            "source_line": 1,
-            "source_symbol": "test",
-            "params": {},
-            "domain": "",
-            "flow": "",
-        }]
+        rules = [
+            {
+                "rule_id": "test:1",
+                "rule_type": "validation",
+                "source_file": "test.java",
+                "source_line": 1,
+                "source_symbol": "test",
+                "params": {},
+                "domain": "",
+                "flow": "",
+            }
+        ]
 
         result = summarizer.summarize(rules)
         assert len(result) == 1

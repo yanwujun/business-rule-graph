@@ -7,10 +7,10 @@
 
 设计假设: 政府采购系统代码少用 Spring 注解，规则在 if+throw 和状态判断中。
 """
+
 from __future__ import annotations
 
 from .models import RuleType
-
 
 # ============================================================
 # 优先级 1: tree-sitter AST 查询 — 流程/判断节点（主力）
@@ -32,7 +32,6 @@ TREE_SITTER_QUERIES = {
           )
         )
     """,
-
     # if (x.getStatus() == OrderStatus.DRAFT) 或 if (x.isApproved())
     "if_status_check": """
         (if_statement
@@ -46,7 +45,6 @@ TREE_SITTER_QUERIES = {
           )
         )
     """,
-
     # switch (status) { case ... }
     "switch_on_status": """
         (switch_expression
@@ -57,7 +55,6 @@ TREE_SITTER_QUERIES = {
           )
         )
     """,
-
     # enum XxxStatus { DRAFT, SUBMITTED, ... }
     "status_enum": """
         (enum_declaration
@@ -65,7 +62,6 @@ TREE_SITTER_QUERIES = {
           (#match? @enum_name ".*[Ss]tatus$")
         ) @enum_node
     """,
-
     # throw new XxxException(...) — 不在 if 里的独立 throw
     "standalone_throw": """
         (expression_statement
@@ -76,7 +72,6 @@ TREE_SITTER_QUERIES = {
           )
         )
     """,
-
     # try { ... } catch (XxxException e) { ... }
     "try_catch_business": """
         (try_statement
@@ -98,41 +93,41 @@ TREE_SITTER_QUERIES = {
 
 METHOD_NAME_PATTERNS = {
     # workflow — 状态流转
-    "setStatus":        (RuleType.WORKFLOW, "status_transition"),
-    "changeStatus":     (RuleType.WORKFLOW, "status_transition"),
-    "updateStatus":     (RuleType.WORKFLOW, "status_transition"),
-    "transitionTo":     (RuleType.WORKFLOW, "status_transition"),
+    "setStatus": (RuleType.WORKFLOW, "status_transition"),
+    "changeStatus": (RuleType.WORKFLOW, "status_transition"),
+    "updateStatus": (RuleType.WORKFLOW, "status_transition"),
+    "transitionTo": (RuleType.WORKFLOW, "status_transition"),
     # workflow — 审批链
-    "submit":           (RuleType.WORKFLOW, "submit"),
-    "approve":          (RuleType.WORKFLOW, "approve"),
-    "reject":           (RuleType.WORKFLOW, "reject"),
-    "audit":            (RuleType.WORKFLOW, "audit"),
-    "review":           (RuleType.WORKFLOW, "review"),
-    "publish":          (RuleType.WORKFLOW, "publish"),
-    "cancel":           (RuleType.WORKFLOW, "cancel"),
+    "submit": (RuleType.WORKFLOW, "submit"),
+    "approve": (RuleType.WORKFLOW, "approve"),
+    "reject": (RuleType.WORKFLOW, "reject"),
+    "audit": (RuleType.WORKFLOW, "audit"),
+    "review": (RuleType.WORKFLOW, "review"),
+    "publish": (RuleType.WORKFLOW, "publish"),
+    "cancel": (RuleType.WORKFLOW, "cancel"),
     # validation
-    "validate":         (RuleType.VALIDATION, "custom_validate"),
-    "check":            (RuleType.VALIDATION, "custom_check"),
-    "assert":           (RuleType.VALIDATION, "custom_assert"),
-    "verify":           (RuleType.VALIDATION, "custom_verify"),
+    "validate": (RuleType.VALIDATION, "custom_validate"),
+    "check": (RuleType.VALIDATION, "custom_check"),
+    "assert": (RuleType.VALIDATION, "custom_assert"),
+    "verify": (RuleType.VALIDATION, "custom_verify"),
     # data_integrity
-    "existsBy":         (RuleType.DATA_INTEGRITY, "unique_check"),
-    "countBy":          (RuleType.DATA_INTEGRITY, "count_check"),
-    "selectBy":         (RuleType.DATA_INTEGRITY, "query"),
-    "findBy":           (RuleType.DATA_INTEGRITY, "query"),
+    "existsBy": (RuleType.DATA_INTEGRITY, "unique_check"),
+    "countBy": (RuleType.DATA_INTEGRITY, "count_check"),
+    "selectBy": (RuleType.DATA_INTEGRITY, "query"),
+    "findBy": (RuleType.DATA_INTEGRITY, "query"),
     # calculation
-    "calculate":        (RuleType.CALCULATION, "compute"),
-    "compute":          (RuleType.CALCULATION, "compute"),
-    "getDiscount":      (RuleType.CALCULATION, "discount"),
-    "getTax":           (RuleType.CALCULATION, "tax"),
-    "getPrice":         (RuleType.CALCULATION, "price"),
-    "getTotal":         (RuleType.CALCULATION, "total"),
-    "getAmount":        (RuleType.CALCULATION, "amount"),
+    "calculate": (RuleType.CALCULATION, "compute"),
+    "compute": (RuleType.CALCULATION, "compute"),
+    "getDiscount": (RuleType.CALCULATION, "discount"),
+    "getTax": (RuleType.CALCULATION, "tax"),
+    "getPrice": (RuleType.CALCULATION, "price"),
+    "getTotal": (RuleType.CALCULATION, "total"),
+    "getAmount": (RuleType.CALCULATION, "amount"),
     # process — 事件/定时/同步
-    "on":               (RuleType.PROCESS, "event_handler"),
-    "handle":           (RuleType.PROCESS, "event_handler"),
-    "sync":             (RuleType.PROCESS, "sync"),
-    "push":             (RuleType.PROCESS, "push"),
+    "on": (RuleType.PROCESS, "event_handler"),
+    "handle": (RuleType.PROCESS, "event_handler"),
+    "sync": (RuleType.PROCESS, "sync"),
+    "push": (RuleType.PROCESS, "push"),
 }
 
 
@@ -141,35 +136,35 @@ METHOD_NAME_PATTERNS = {
 # ============================================================
 
 ANNOTATION_RULE_MAP = {
-    "NotNull":   (RuleType.VALIDATION, "required"),
-    "NotBlank":  (RuleType.VALIDATION, "required"),
-    "NotEmpty":  (RuleType.VALIDATION, "required"),
-    "Min":       (RuleType.VALIDATION, ">="),
-    "Max":       (RuleType.VALIDATION, "<="),
-    "Valid":     (RuleType.VALIDATION, "cascade"),
-    "PreAuthorize":    (RuleType.AUTHORIZATION, "spel"),
-    "RolesAllowed":    (RuleType.AUTHORIZATION, "roles"),
-    "Retryable":       (RuleType.INTEGRATION, "retry"),
-    "CircuitBreaker":  (RuleType.INTEGRATION, "circuit_breaker"),
-    "Value":           (RuleType.CONFIGURATION, "property"),
-    "Transactional":   (RuleType.WORKFLOW, "transactional"),
-    "EventListener":   (RuleType.PROCESS, "event"),
+    "NotNull": (RuleType.VALIDATION, "required"),
+    "NotBlank": (RuleType.VALIDATION, "required"),
+    "NotEmpty": (RuleType.VALIDATION, "required"),
+    "Min": (RuleType.VALIDATION, ">="),
+    "Max": (RuleType.VALIDATION, "<="),
+    "Valid": (RuleType.VALIDATION, "cascade"),
+    "PreAuthorize": (RuleType.AUTHORIZATION, "spel"),
+    "RolesAllowed": (RuleType.AUTHORIZATION, "roles"),
+    "Retryable": (RuleType.INTEGRATION, "retry"),
+    "CircuitBreaker": (RuleType.INTEGRATION, "circuit_breaker"),
+    "Value": (RuleType.CONFIGURATION, "property"),
+    "Transactional": (RuleType.WORKFLOW, "transactional"),
+    "EventListener": (RuleType.PROCESS, "event"),
     # MyBatis
-    "Select":          (RuleType.DATA_INTEGRITY, "mybatis_select"),
-    "Insert":          (RuleType.DATA_INTEGRITY, "mybatis_insert"),
-    "Update":          (RuleType.DATA_INTEGRITY, "mybatis_update"),
-    "Delete":          (RuleType.DATA_INTEGRITY, "mybatis_delete"),
+    "Select": (RuleType.DATA_INTEGRITY, "mybatis_select"),
+    "Insert": (RuleType.DATA_INTEGRITY, "mybatis_insert"),
+    "Update": (RuleType.DATA_INTEGRITY, "mybatis_update"),
+    "Delete": (RuleType.DATA_INTEGRITY, "mybatis_delete"),
     # Spring Cache / Redis
-    "Cacheable":       (RuleType.INTEGRATION, "cache_read"),
-    "CacheEvict":      (RuleType.INTEGRATION, "cache_evict"),
-    "CachePut":        (RuleType.INTEGRATION, "cache_write"),
+    "Cacheable": (RuleType.INTEGRATION, "cache_read"),
+    "CacheEvict": (RuleType.INTEGRATION, "cache_evict"),
+    "CachePut": (RuleType.INTEGRATION, "cache_write"),
     # Configuration
     "ConfigurationProperties": (RuleType.CONFIGURATION, "config_prefix"),
-    "Scheduled":       (RuleType.PROCESS, "scheduled"),
-    "Async":           (RuleType.PROCESS, "async"),
+    "Scheduled": (RuleType.PROCESS, "scheduled"),
+    "Async": (RuleType.PROCESS, "async"),
     # Data
-    "Table":           (RuleType.DATA_INTEGRITY, "table_mapping"),
-    "Column":          (RuleType.DATA_INTEGRITY, "column_def"),
+    "Table": (RuleType.DATA_INTEGRITY, "table_mapping"),
+    "Column": (RuleType.DATA_INTEGRITY, "column_def"),
 }
 
 # ============================================================
@@ -177,17 +172,17 @@ ANNOTATION_RULE_MAP = {
 # ============================================================
 
 MYBATIS_METHOD_PATTERNS = {
-    "insert":         (RuleType.DATA_INTEGRITY, "insert"),
-    "insertSelective":(RuleType.DATA_INTEGRITY, "insert"),
-    "insertBatch":    (RuleType.DATA_INTEGRITY, "batch_insert"),
-    "updateByPrimaryKey":       (RuleType.DATA_INTEGRITY, "update"),
+    "insert": (RuleType.DATA_INTEGRITY, "insert"),
+    "insertSelective": (RuleType.DATA_INTEGRITY, "insert"),
+    "insertBatch": (RuleType.DATA_INTEGRITY, "batch_insert"),
+    "updateByPrimaryKey": (RuleType.DATA_INTEGRITY, "update"),
     "updateByPrimaryKeySelective": (RuleType.DATA_INTEGRITY, "update"),
     "updateBatchById": (RuleType.DATA_INTEGRITY, "batch_update"),
     "deleteByPrimaryKey": (RuleType.DATA_INTEGRITY, "delete"),
-    "deleteBatch":    (RuleType.DATA_INTEGRITY, "batch_delete"),
+    "deleteBatch": (RuleType.DATA_INTEGRITY, "batch_delete"),
     "selectByPrimaryKey": (RuleType.DATA_INTEGRITY, "select"),
-    "selectBy":       (RuleType.DATA_INTEGRITY, "query"),
-    "countBy":        (RuleType.DATA_INTEGRITY, "count"),
+    "selectBy": (RuleType.DATA_INTEGRITY, "query"),
+    "countBy": (RuleType.DATA_INTEGRITY, "count"),
 }
 
 # ============================================================
@@ -195,10 +190,19 @@ MYBATIS_METHOD_PATTERNS = {
 # ============================================================
 
 REDIS_KEYWORDS = [
-    "RedisLock", "RedisDistributedLock", "Redisson",
-    "redisTemplate", "RedisTemplate", "StringRedisTemplate",
-    "opsForValue", "opsForHash", "opsForList", "opsForSet",
-    "setIfAbsent", "tryLock", "unlock",
+    "RedisLock",
+    "RedisDistributedLock",
+    "Redisson",
+    "redisTemplate",
+    "RedisTemplate",
+    "StringRedisTemplate",
+    "opsForValue",
+    "opsForHash",
+    "opsForList",
+    "opsForSet",
+    "setIfAbsent",
+    "tryLock",
+    "unlock",
 ]
 
 
@@ -206,24 +210,39 @@ REDIS_KEYWORDS = [
 # 辅助函数
 # ============================================================
 
+
 def domain_from_package(package: str) -> str:
     """从 Java 包名推断业务域（LLM 语义化之前的兜底方案）"""
     parts = package.replace("com.xcj.", "").split(".")
     domain_map = {
-        "order": "订单管理", "trade": "交易管理",
-        "supplier": "供应商管理", "provider": "供应商管理",
-        "product": "商品管理", "goods": "商品管理",
-        "user": "用户管理", "member": "会员管理",
-        "payment": "支付管理", "pay": "支付管理",
-        "contract": "合同管理", "agreement": "协议管理",
-        "framework": "框架协议", "direct": "直采商城",
-        "mall": "商城管理", "cart": "购物车",
-        "audit": "审核管理", "approval": "审批管理",
-        "logistics": "物流管理", "delivery": "配送管理",
-        "invoice": "发票管理", "bill": "账单管理",
-        "report": "报表管理", "statistics": "统计分析",
-        "message": "消息管理", "notification": "通知管理",
-        "system": "系统管理", "admin": "管理后台",
+        "order": "订单管理",
+        "trade": "交易管理",
+        "supplier": "供应商管理",
+        "provider": "供应商管理",
+        "product": "商品管理",
+        "goods": "商品管理",
+        "user": "用户管理",
+        "member": "会员管理",
+        "payment": "支付管理",
+        "pay": "支付管理",
+        "contract": "合同管理",
+        "agreement": "协议管理",
+        "framework": "框架协议",
+        "direct": "直采商城",
+        "mall": "商城管理",
+        "cart": "购物车",
+        "audit": "审核管理",
+        "approval": "审批管理",
+        "logistics": "物流管理",
+        "delivery": "配送管理",
+        "invoice": "发票管理",
+        "bill": "账单管理",
+        "report": "报表管理",
+        "statistics": "统计分析",
+        "message": "消息管理",
+        "notification": "通知管理",
+        "system": "系统管理",
+        "admin": "管理后台",
     }
     for key, name in domain_map.items():
         if key in parts:
@@ -234,19 +253,32 @@ def domain_from_package(package: str) -> str:
 def flow_from_class(class_name: str) -> str:
     """从类名推断业务流程（LLM 语义化之前的兜底方案）"""
     flow_map = {
-        "Order": "下单", "Trade": "交易",
-        "Payment": "支付", "Refund": "退款",
-        "Submit": "提交", "Audit": "审核",
-        "Approve": "审批", "Review": "审核",
-        "Deliver": "发货", "Logistics": "物流",
-        "Cart": "购物车", "Inventory": "库存",
-        "Price": "定价", "Discount": "折扣",
-        "Contract": "签约", "Register": "注册",
-        "Login": "登录", "Search": "搜索",
-        "Recommend": "推荐", "Report": "报表",
-        "Export": "导出", "Import": "导入",
-        "Push": "推送", "Sync": "同步",
-        "Supplier": "供应商", "Provider": "供应商",
+        "Order": "下单",
+        "Trade": "交易",
+        "Payment": "支付",
+        "Refund": "退款",
+        "Submit": "提交",
+        "Audit": "审核",
+        "Approve": "审批",
+        "Review": "审核",
+        "Deliver": "发货",
+        "Logistics": "物流",
+        "Cart": "购物车",
+        "Inventory": "库存",
+        "Price": "定价",
+        "Discount": "折扣",
+        "Contract": "签约",
+        "Register": "注册",
+        "Login": "登录",
+        "Search": "搜索",
+        "Recommend": "推荐",
+        "Report": "报表",
+        "Export": "导出",
+        "Import": "导入",
+        "Push": "推送",
+        "Sync": "同步",
+        "Supplier": "供应商",
+        "Provider": "供应商",
     }
     for key, name in flow_map.items():
         if class_name.startswith(key) or class_name.endswith(key):
@@ -257,6 +289,7 @@ def flow_from_class(class_name: str) -> str:
 def extract_exception_message(source_bytes: bytes, node_start: int, node_end: int) -> str:
     """从 throw new XxxException("消息") 提取中文消息"""
     import re
+
     text = source_bytes[node_start:node_end].decode(errors="replace")
     m = re.search(r'"([^"]*)"', text)
     return m.group(1) if m else ""
@@ -279,8 +312,6 @@ def extract_enum_values(node, source_bytes: bytes) -> list[str]:
                 if sub.type == "enum_constant":
                     for c in sub.children:
                         if c.type == "identifier":
-                            values.append(
-                                source_bytes[c.start_byte:c.end_byte].decode()
-                            )
+                            values.append(source_bytes[c.start_byte : c.end_byte].decode())
                             break
     return values

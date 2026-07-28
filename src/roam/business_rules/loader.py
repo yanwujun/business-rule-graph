@@ -1,4 +1,5 @@
 """共享数据加载器 — graph.py + conflict.py 去重"""
+
 from __future__ import annotations
 
 import json
@@ -9,9 +10,7 @@ def load_rules(db_path: str) -> list[dict]:
     """加载所有业务规则，自动解析 params JSON"""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM business_rules ORDER BY source_file, source_line"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM business_rules ORDER BY source_file, source_line").fetchall()
     rules = []
     for r in rows:
         d = dict(r)

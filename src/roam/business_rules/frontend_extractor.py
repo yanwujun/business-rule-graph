@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 from pathlib import Path
 
 from .models import BusinessRule, RuleType
@@ -59,12 +59,24 @@ _RE_ENUM_STATUS = re.compile(
 # ---- domain 推断 ----
 
 _DOMAIN_FROM_PATH = {
-    "order": "订单管理", "bid": "招标管理", "contract": "合同管理",
-    "goods": "商品管理", "supplier": "供应商管理", "payment": "支付管理",
-    "fee": "费用管理", "plan": "计划管理", "stock": "库存管理",
-    "settled": "入驻管理", "entrust": "委托管理", "trading": "交易管理",
-    "notice": "公告管理", "collect": "征集管理", "protocol": "协议管理",
-    "dispute": "争议管理", "account": "账户管理", "purchase": "采购管理",
+    "order": "订单管理",
+    "bid": "招标管理",
+    "contract": "合同管理",
+    "goods": "商品管理",
+    "supplier": "供应商管理",
+    "payment": "支付管理",
+    "fee": "费用管理",
+    "plan": "计划管理",
+    "stock": "库存管理",
+    "settled": "入驻管理",
+    "entrust": "委托管理",
+    "trading": "交易管理",
+    "notice": "公告管理",
+    "collect": "征集管理",
+    "protocol": "协议管理",
+    "dispute": "争议管理",
+    "account": "账户管理",
+    "purchase": "采购管理",
 }
 
 
@@ -74,9 +86,7 @@ class FrontendExtractor:
     def __init__(self, project_root: Path | str = "."):
         self.project_root = Path(project_root)
 
-    def extract_from_db(
-        self, db_path: str, incremental: bool = False
-    ) -> list[BusinessRule]:
+    def extract_from_db(self, db_path: str, incremental: bool = False) -> list[BusinessRule]:
         import sqlite3
 
         rules: list[BusinessRule] = []
@@ -84,9 +94,7 @@ class FrontendExtractor:
 
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT path FROM files WHERE language IN ('typescript', 'tsx')"
-            ).fetchall()
+            rows = conn.execute("SELECT path FROM files WHERE language IN ('typescript', 'tsx')").fetchall()
 
         files = [r["path"] for r in rows]
         total = len(files)
@@ -128,55 +136,69 @@ class FrontendExtractor:
         for m in _RE_RULE_REQUIRED.finditer(source):
             msg = m.group(1)
             line = source[: m.start()].count("\n") + 1
-            rules.append(BusinessRule(
-                rule_id=f"{file_path}:{line}:form-required",
-                rule_type=RuleType.VALIDATION,
-                domain=domain,
-                description=msg,
-                source_file=file_path, source_line=line,
-                params={"required": True, "message": msg, "extraction": "frontend_form"},
-                extraction="frontend_form",
-            ))
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:form-required",
+                    rule_type=RuleType.VALIDATION,
+                    domain=domain,
+                    description=msg,
+                    source_file=file_path,
+                    source_line=line,
+                    params={"required": True, "message": msg, "extraction": "frontend_form"},
+                    extraction="frontend_form",
+                )
+            )
 
         # max constraints
         for m in _RE_RULE_MAX.finditer(source):
             val, msg = m.group(1), m.group(2)
             line = source[: m.start()].count("\n") + 1
-            rules.append(BusinessRule(
-                rule_id=f"{file_path}:{line}:form-max",
-                rule_type=RuleType.VALIDATION,
-                domain=domain, description=msg,
-                source_file=file_path, source_line=line,
-                params={"max": int(val), "message": msg, "extraction": "frontend_form"},
-                extraction="frontend_form",
-            ))
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:form-max",
+                    rule_type=RuleType.VALIDATION,
+                    domain=domain,
+                    description=msg,
+                    source_file=file_path,
+                    source_line=line,
+                    params={"max": int(val), "message": msg, "extraction": "frontend_form"},
+                    extraction="frontend_form",
+                )
+            )
 
         # min constraints
         for m in _RE_RULE_MIN.finditer(source):
             val, msg = m.group(1), m.group(2)
             line = source[: m.start()].count("\n") + 1
-            rules.append(BusinessRule(
-                rule_id=f"{file_path}:{line}:form-min",
-                rule_type=RuleType.VALIDATION,
-                domain=domain, description=msg,
-                source_file=file_path, source_line=line,
-                params={"min": int(val), "message": msg, "extraction": "frontend_form"},
-                extraction="frontend_form",
-            ))
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:form-min",
+                    rule_type=RuleType.VALIDATION,
+                    domain=domain,
+                    description=msg,
+                    source_file=file_path,
+                    source_line=line,
+                    params={"min": int(val), "message": msg, "extraction": "frontend_form"},
+                    extraction="frontend_form",
+                )
+            )
 
         # custom validators
         for m in _RE_RULE_VALIDATOR.finditer(source):
             name = m.group(1)
             line = source[: m.start()].count("\n") + 1
-            rules.append(BusinessRule(
-                rule_id=f"{file_path}:{line}:validator-{name}",
-                rule_type=RuleType.VALIDATION,
-                domain=domain,
-                description=f"自定义校验: {name}",
-                source_file=file_path, source_line=line,
-                params={"validator": name, "extraction": "frontend_validator"},
-                extraction="frontend_validator",
-            ))
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:validator-{name}",
+                    rule_type=RuleType.VALIDATION,
+                    domain=domain,
+                    description=f"自定义校验: {name}",
+                    source_file=file_path,
+                    source_line=line,
+                    params={"validator": name, "extraction": "frontend_validator"},
+                    extraction="frontend_validator",
+                )
+            )
 
         # status enums
         for m in _RE_ENUM_STATUS.finditer(source):
@@ -184,14 +206,17 @@ class FrontendExtractor:
             body = m.group(2)
             line = source[: m.start()].count("\n") + 1
             values = re.findall(r"(\w+)\s*[=}]", body)
-            rules.append(BusinessRule(
-                rule_id=f"{file_path}:{line}:enum-{name}",
-                rule_type=RuleType.WORKFLOW,
-                domain=domain,
-                description=f"状态枚举: {name} = [{', '.join(values[:6])}{'...' if len(values) > 6 else ''}]",
-                source_file=file_path, source_line=line,
-                params={"enum_name": name, "enum_values": values, "extraction": "frontend_enum"},
-                extraction="frontend_enum",
-            ))
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:enum-{name}",
+                    rule_type=RuleType.WORKFLOW,
+                    domain=domain,
+                    description=f"状态枚举: {name} = [{', '.join(values[:6])}{'...' if len(values) > 6 else ''}]",
+                    source_file=file_path,
+                    source_line=line,
+                    params={"enum_name": name, "enum_values": values, "extraction": "frontend_enum"},
+                    extraction="frontend_enum",
+                )
+            )
 
         return rules

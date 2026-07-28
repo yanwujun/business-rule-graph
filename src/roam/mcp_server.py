@@ -19803,6 +19803,7 @@ def roam_verdict(
 # Business Rule Graph MCP tools
 # ---------------------------------------------------------------------------
 
+
 @_tool(
     name="business_rules_extract",
     description=(

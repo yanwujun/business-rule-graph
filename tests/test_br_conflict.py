@@ -2,12 +2,12 @@
 
 覆盖: 阈值冲突 / 权限移除 / 状态机断裂（死端 + 孤立入口 + 不可达）
 """
+
 import json
 import sqlite3
 import tempfile
 from pathlib import Path
 
-import pytest
 from roam.business_rules.conflict import ConflictDetector
 
 
@@ -51,14 +51,24 @@ def _init_db(db_path: str):
     return conn
 
 
-def _insert_rule(conn, rule_id, rule_type, source_file="test.java", source_line=1,
-                 source_symbol="testMethod", params=None, description=""):
-    conn.execute("""
+def _insert_rule(
+    conn,
+    rule_id,
+    rule_type,
+    source_file="test.java",
+    source_line=1,
+    source_symbol="testMethod",
+    params=None,
+    description="",
+):
+    conn.execute(
+        """
         INSERT OR REPLACE INTO business_rules
         (rule_id, rule_type, source_file, source_line, source_symbol, params, description)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (rule_id, rule_type, source_file, source_line, source_symbol,
-          json.dumps(params or {}), description))
+    """,
+        (rule_id, rule_type, source_file, source_line, source_symbol, json.dumps(params or {}), description),
+    )
     conn.commit()
 
 
@@ -72,12 +82,20 @@ class TestThresholdMismatch:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "OrderService:145:if-throw", "validation",
-                         params={"field": "total", "operator": ">=", "threshold": "100"},
-                         description="金额>=100")
-            _insert_rule(conn, "PaymentService:89:if-throw", "validation",
-                         params={"field": "total", "operator": ">=", "threshold": "50"},
-                         description="金额>=50")
+            _insert_rule(
+                conn,
+                "OrderService:145:if-throw",
+                "validation",
+                params={"field": "total", "operator": ">=", "threshold": "100"},
+                description="金额>=100",
+            )
+            _insert_rule(
+                conn,
+                "PaymentService:89:if-throw",
+                "validation",
+                params={"field": "total", "operator": ">=", "threshold": "50"},
+                description="金额>=50",
+            )
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -96,10 +114,8 @@ class TestThresholdMismatch:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "A:1:if-throw", "validation",
-                         params={"field": "total", "threshold": "100"})
-            _insert_rule(conn, "B:1:if-throw", "validation",
-                         params={"field": "total", "threshold": "100"})
+            _insert_rule(conn, "A:1:if-throw", "validation", params={"field": "total", "threshold": "100"})
+            _insert_rule(conn, "B:1:if-throw", "validation", params={"field": "total", "threshold": "100"})
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -115,10 +131,8 @@ class TestThresholdMismatch:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "A:1:if-throw", "validation",
-                         params={"field": "total", "threshold": "100"})
-            _insert_rule(conn, "B:1:if-throw", "validation",
-                         params={"field": "amount", "threshold": "50"})
+            _insert_rule(conn, "A:1:if-throw", "validation", params={"field": "total", "threshold": "100"})
+            _insert_rule(conn, "B:1:if-throw", "validation", params={"field": "amount", "threshold": "50"})
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -138,14 +152,26 @@ class TestStatusDeadend:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "Flow:10:status-check", "workflow",
-                         source_symbol="DRAFT",
-                         params={"status_value": "SUBMITTED", "sub_type": "status_transition"})
-            _insert_rule(conn, "Flow:20:status-check", "workflow",
-                         source_symbol="SUBMITTED",
-                         params={"status_value": "APPROVED", "sub_type": "status_transition"})
-            _insert_rule(conn, "StatusEnum:1:status-enum", "workflow",
-                         params={"enum_values": ["DRAFT", "SUBMITTED", "APPROVED", "ARCHIVED"]})
+            _insert_rule(
+                conn,
+                "Flow:10:status-check",
+                "workflow",
+                source_symbol="DRAFT",
+                params={"status_value": "SUBMITTED", "sub_type": "status_transition"},
+            )
+            _insert_rule(
+                conn,
+                "Flow:20:status-check",
+                "workflow",
+                source_symbol="SUBMITTED",
+                params={"status_value": "APPROVED", "sub_type": "status_transition"},
+            )
+            _insert_rule(
+                conn,
+                "StatusEnum:1:status-enum",
+                "workflow",
+                params={"enum_values": ["DRAFT", "SUBMITTED", "APPROVED", "ARCHIVED"]},
+            )
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -164,11 +190,19 @@ class TestStatusDeadend:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "Flow:10:status-check", "workflow",
-                         source_symbol="DRAFT",
-                         params={"status_value": "SUBMITTED", "sub_type": "status_transition"})
-            _insert_rule(conn, "StatusEnum:1:status-enum", "workflow",
-                         params={"enum_values": ["DRAFT", "SUBMITTED", "APPROVED", "CANCELED"]})
+            _insert_rule(
+                conn,
+                "Flow:10:status-check",
+                "workflow",
+                source_symbol="DRAFT",
+                params={"status_value": "SUBMITTED", "sub_type": "status_transition"},
+            )
+            _insert_rule(
+                conn,
+                "StatusEnum:1:status-enum",
+                "workflow",
+                params={"enum_values": ["DRAFT", "SUBMITTED", "APPROVED", "CANCELED"]},
+            )
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -186,8 +220,7 @@ class TestStatusDeadend:
 
         try:
             conn = _init_db(db_path)
-            _insert_rule(conn, "Other:1:if-throw", "validation",
-                         params={"field": "total", "threshold": "100"})
+            _insert_rule(conn, "Other:1:if-throw", "validation", params={"field": "total", "threshold": "100"})
             conn.close()
 
             detector = ConflictDetector(db_path)
@@ -210,9 +243,9 @@ class TestAuthRemoved:
         try:
             conn = _init_db(db_path)
             # 插入一条 auth 规则和两个快照
-            _insert_rule(conn, "AuthCheck:10:auth-annotation", "authorization",
-                         source_symbol="checkAuth",
-                         description="权限检查")
+            _insert_rule(
+                conn, "AuthCheck:10:auth-annotation", "authorization", source_symbol="checkAuth", description="权限检查"
+            )
             # 快照1: 包含 auth 规则
             conn.execute("""
                 INSERT INTO business_rule_snapshots (id, label, added_rules, removed_rules)

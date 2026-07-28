@@ -13,7 +13,7 @@
 <sub>100% 本地 · 后端 Java + 前端 React 双提取 · 规则图谱 + 冲突检测 · 多根工作区 · 向量图可视化 · 兼容 SVN</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>289 commands · 250 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -553,7 +553,7 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~276 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **281 commands (274 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~284 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **289 commands (282 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -568,7 +568,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 274)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 282)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -690,12 +690,18 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 244)</strong></summary>
+<summary><strong>MCP tool list (all 250)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
 | Tool | Description |
 |------|-------------|
+| `business_rules_check` | 检测业务规则冲突:同字段阈值不一致、权限移除、状态机断裂等。 |
+| `business_rules_diff` | 对比两个业务规则快照,返回新增/删除/变更规则列表。 |
+| `business_rules_extract` | 从 Java/Spring 代码提取业务规则(AST引擎,零LLM)。扫描 if-throw 断言、状态判断、枚举定义、方法命名约定和注解,提取为结构化规则。 |
+| `business_rules_graph` | 构建/重建业务规则知识图谱(same_field/same_flow/conflicts_with 自动建边)。 |
+| `business_rules_snapshot` | 创建业务规则版本快照,用于后续 diff 比对。 |
+| `business_rules_summarize` | LLM 语义增强 — 为 AST 提取的规则补充业务域/流程/自然语言描述,归并同义规则。需要 OPENAI_API_KEY 或兼容 API key。 |
 | `roam_adrs` | Discover Architecture Decision Records (ADRs) and link them to code modules. Scans well-known ADR directories (``docs/adr/`` / ``architecture/decisions/`` / ...) for markdown files matching ADR naming patterns, parses each ADR's title / status / date / file refs, then cross-references mentioned files against the symbol index. Different from ``roam_doc_staleness`` (inline docstring drift) -- this is the prose-decision-document discoverer. |
 | `roam_adversarial` | Frame architectural issues in changed files as challenges the developer must defend: CRITICAL (new cyclic dependencies), HIGH (layer violations, high-confidence anti-patterns), WARNING (cross-cluster coupling, high fan-out), INFO (orphaned symbols). Composes cycles + clusters + layers + catalog + dead + complexity. Different from ``roam_diff`` (blast-radius facts) -- this is the architecture-review framing for code-review agents. |
 | `roam_adversarial_review` | Adversarial architecture review: challenges about cycles, anti-patterns, coupling. |

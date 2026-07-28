@@ -6,28 +6,38 @@ import json
 import sqlite3
 
 COLORS = {
-    "validation": "#e74c3c", "authorization": "#e67e22", "workflow": "#2ecc71",
-    "calculation": "#3498db", "data_integrity": "#9b59b6", "process": "#1abc9c",
-    "configuration": "#95a5a6", "integration": "#f39c12",
+    "validation": "#e74c3c",
+    "authorization": "#e67e22",
+    "workflow": "#2ecc71",
+    "calculation": "#3498db",
+    "data_integrity": "#9b59b6",
+    "process": "#1abc9c",
+    "configuration": "#95a5a6",
+    "integration": "#f39c12",
 }
 
 EDGE_COLORS = {
-    "same_field": "#ff6b6b", "same_flow": "#48dbfb", "conflicts_with": "#feca57",
+    "same_field": "#ff6b6b",
+    "same_flow": "#48dbfb",
+    "conflicts_with": "#feca57",
 }
 
 
 def generate(db_path: str, output_path: str = "business-rules.html") -> str:
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        rules = [dict(r) for r in conn.execute(
-            "SELECT * FROM business_rules ORDER BY source_file, source_line"
-        ).fetchall()]
-        edges = [dict(e) for e in conn.execute("""
+        rules = [
+            dict(r) for r in conn.execute("SELECT * FROM business_rules ORDER BY source_file, source_line").fetchall()
+        ]
+        edges = [
+            dict(e)
+            for e in conn.execute("""
             SELECT bre.edge_type, br1.rule_id AS source, br2.rule_id AS target
             FROM business_rule_edges bre
             JOIN business_rules br1 ON bre.source_rule_id = br1.id
             JOIN business_rules br2 ON bre.target_rule_id = br2.id
-        """).fetchall()]
+        """).fetchall()
+        ]
 
     graph: dict[str, list[tuple[str, str]]] = {}
     for e in edges:
@@ -36,19 +46,28 @@ def generate(db_path: str, output_path: str = "business-rules.html") -> str:
         graph.setdefault(t, []).append((s, et))
 
     # 预构建 JS 数据
-    rules_js = json.dumps([
-        {"rule_id": r["rule_id"], "rule_type": r["rule_type"], "domain": r["domain"],
-         "flow": r["flow"] or "", "description": r["description"], "severity": r["severity"],
-         "source_file": r["source_file"], "source_line": r["source_line"], "hash": r["hash"],
-         "merge_with": r.get("merge_with"), "extraction": r.get("extraction", ""),
-         "params": json.loads(r["params"]) if isinstance(r["params"], str) else r["params"]}
-        for r in rules
-    ], ensure_ascii=False)
-
-    graph_js = json.dumps(
-        {rid: [[t, et] for t, et in nbs] for rid, nbs in graph.items()},
-        ensure_ascii=False
+    rules_js = json.dumps(
+        [
+            {
+                "rule_id": r["rule_id"],
+                "rule_type": r["rule_type"],
+                "domain": r["domain"],
+                "flow": r["flow"] or "",
+                "description": r["description"],
+                "severity": r["severity"],
+                "source_file": r["source_file"],
+                "source_line": r["source_line"],
+                "hash": r["hash"],
+                "merge_with": r.get("merge_with"),
+                "extraction": r.get("extraction", ""),
+                "params": json.loads(r["params"]) if isinstance(r["params"], str) else r["params"],
+            }
+            for r in rules
+        ],
+        ensure_ascii=False,
     )
+
+    graph_js = json.dumps({rid: [[t, et] for t, et in nbs] for rid, nbs in graph.items()}, ensure_ascii=False)
 
     colors_js = json.dumps(COLORS)
     edge_colors_js = json.dumps(EDGE_COLORS)
@@ -58,10 +77,15 @@ def generate(db_path: str, output_path: str = "business-rules.html") -> str:
     rule_cards = _render_rule_cards(rules)
 
     html = _HTML_TEMPLATE.format(
-        n_rules=len(rules), n_edges=len(edges),
-        type_bar=type_bar, type_opts=type_opts, rule_cards=rule_cards,
-        rules_js=rules_js, graph_js=graph_js,
-        colors_js=colors_js, edge_colors_js=edge_colors_js,
+        n_rules=len(rules),
+        n_edges=len(edges),
+        type_bar=type_bar,
+        type_opts=type_opts,
+        rule_cards=rule_cards,
+        rules_js=rules_js,
+        graph_js=graph_js,
+        colors_js=colors_js,
+        edge_colors_js=edge_colors_js,
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -289,8 +313,7 @@ def _render_type_bar(rules: list[dict]) -> str:
         pct = count / total * 100
         color = COLORS.get(rt, "#555")
         segs.append(
-            f'<div class="bar-seg" style="width:{pct:.1f}%;background:{color}" '
-            f'title="{rt}:{count}">{rt[:4]}</div>'
+            f'<div class="bar-seg" style="width:{pct:.1f}%;background:{color}" title="{rt}:{count}">{rt[:4]}</div>'
         )
     return "\n".join(segs)
 
@@ -317,12 +340,13 @@ def _render_rule_cards(rules: list[dict]) -> str:
             f'<div class="rule-id">{r["rule_id"][:60]}</div>'
             f'<div class="rule-desc">{r["description"][:50]}</div>'
             f'<span class="tag" style="background:{color}">{r["rule_type"]}</span>'
-            f'<span class="tag" style="background:#333">{r.get("domain","")[:8]}</span>'
-            f'</div>'
+            f'<span class="tag" style="background:#333">{r.get("domain", "")[:8]}</span>'
+            f"</div>"
         )
     return "\n".join(cards)
 
 
 def _safe_html_id(s: str) -> str:
     import re
-    return re.sub(r'[^a-zA-Z0-9_.:-]', '_', s)
+
+    return re.sub(r"[^a-zA-Z0-9_.:-]", "_", s)

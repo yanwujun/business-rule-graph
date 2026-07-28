@@ -457,28 +457,36 @@ _COMMANDS = {
     "evidence-oscal": ("roam.commands.cmd_evidence_oscal", "evidence_oscal"),
     # Business Rule Graph (business-rule-graph extension)
     "business-rules-extract": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_extract",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_extract",
     ),
     "business-rules-summarize": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_summarize",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_summarize",
     ),
     "business-rules-graph": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_graph",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_graph",
     ),
     "business-rules-check": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_check",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_check",
     ),
     "business-rules-diff": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_diff",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_diff",
     ),
     "business-rules-snapshot": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_snapshot",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_snapshot",
     ),
     "business-rules-list": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_list",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_list",
     ),
     "business-rules-explain": (
-        "roam.business_rules.commands.cmd_br_extract", "cmd_br_explain",
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_explain",
     ),
 }
 

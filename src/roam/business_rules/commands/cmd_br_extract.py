@@ -1,4 +1,5 @@
 """CLI commands — extract, summarize, graph, check, diff, snapshot, list, explain"""
+
 from __future__ import annotations
 
 import json
@@ -8,10 +9,13 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
+
 
 def _get_db_path():
     try:
         from roam.db.connection import find_project_root
+
         root = find_project_root()
     except Exception:
         root = "."
@@ -22,6 +26,7 @@ def _resolve_projects(workspace):
     """解析工作区项目列表。无 --workspace 时返回空列表（单项目模式）。"""
     if workspace:
         from roam.business_rules.workspace import resolve_workspace
+
         return resolve_workspace(workspace)
     return []
 
@@ -52,19 +57,42 @@ def _extract_one(project_root, update=False):
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("DELETE FROM business_rules WHERE 1=1")
-        conn.executemany("""INSERT OR REPLACE INTO business_rules
+        conn.executemany(
+            """INSERT OR REPLACE INTO business_rules
             (rule_id, rule_type, domain, flow, description, severity,
              source_file, source_line, source_symbol, params, annotations, hash, extraction)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", [
-            (r.rule_id, r.rule_type.value, r.domain, r.flow, r.description, r.severity.value,
-             r.source_file, r.source_line, r.source_symbol,
-             json.dumps(r.params, ensure_ascii=False), json.dumps(r.annotations, ensure_ascii=False),
-             r.compute_hash(), r.extraction) for r in all_rules
-        ])
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    r.rule_id,
+                    r.rule_type.value,
+                    r.domain,
+                    r.flow,
+                    r.description,
+                    r.severity.value,
+                    r.source_file,
+                    r.source_line,
+                    r.source_symbol,
+                    json.dumps(r.params, ensure_ascii=False),
+                    json.dumps(r.annotations, ensure_ascii=False),
+                    r.compute_hash(),
+                    r.extraction,
+                )
+                for r in all_rules
+            ],
+        )
         conn.commit()
     return all_rules, None
 
 
+@roam_capability(
+    name="business-rules-extract",
+    category="extraction",
+    summary="Extract business rules from Java/Spring Boot and frontend code via AST analysis.",
+    inputs=["codebase"],
+    outputs=["business_rules"],
+    examples=["roam business-rules extract", "roam business-rules extract --update"],
+)
 @click.command("business-rules-extract")
 @click.option("--update", is_flag=True, help="Incremental: only changed files")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
@@ -96,8 +124,13 @@ def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=Non
         total_rules = sum(r["total"] for r in all_results)
         active = [r for r in all_results if r["status"] == "ok"]
         if as_json:
-            click.echo(json.dumps({"workspace_projects": len(projects), "total_rules": total_rules,
-                                   "projects": all_results}, indent=2, ensure_ascii=False))
+            click.echo(
+                json.dumps(
+                    {"workspace_projects": len(projects), "total_rules": total_rules, "projects": all_results},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
         else:
             click.echo(f"\nWorkspace: {len(active)} projects active, {total_rules} total rules")
 
@@ -119,15 +152,30 @@ def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=Non
 
         with sqlite3.connect(db_path) as conn:
             conn.execute("DELETE FROM business_rules WHERE 1=1")
-            conn.executemany("""INSERT OR REPLACE INTO business_rules
+            conn.executemany(
+                """INSERT OR REPLACE INTO business_rules
                 (rule_id, rule_type, domain, flow, description, severity,
                  source_file, source_line, source_symbol, params, annotations, hash, extraction)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", [
-                (r.rule_id, r.rule_type.value, r.domain, r.flow, r.description, r.severity.value,
-                 r.source_file, r.source_line, r.source_symbol,
-                 json.dumps(r.params, ensure_ascii=False), json.dumps(r.annotations, ensure_ascii=False),
-                 r.compute_hash(), r.extraction) for r in rules
-            ])
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        r.rule_id,
+                        r.rule_type.value,
+                        r.domain,
+                        r.flow,
+                        r.description,
+                        r.severity.value,
+                        r.source_file,
+                        r.source_line,
+                        r.source_symbol,
+                        json.dumps(r.params, ensure_ascii=False),
+                        json.dumps(r.annotations, ensure_ascii=False),
+                        r.compute_hash(),
+                        r.extraction,
+                    )
+                    for r in rules
+                ],
+            )
             conn.commit()
 
         by_type = {}
@@ -141,6 +189,14 @@ def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=Non
                 click.echo(f"  {rt}: {count}")
 
 
+@roam_capability(
+    name="business-rules-summarize",
+    category="analysis",
+    summary="LLM semantic enrichment — add business context and merge duplicates.",
+    inputs=["business_rules"],
+    outputs=["enriched_rules", "merges"],
+    examples=["roam business-rules summarize", "roam business-rules summarize --agent"],
+)
 @click.command("business-rules-summarize")
 @click.option("--api-key", default=None, help="LLM API key")
 @click.option("--base-url", default=None, help="LLM API base URL")
@@ -149,8 +205,9 @@ def cmd_br_extract(update=False, as_json=False, project_root=None, workspace=Non
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--agent", is_flag=True, help="Export prompt for agent LLM (Cursor/Hermes)")
 @click.option("--agent-apply", "agent_apply", default=None, help="Apply agent LLM response file to DB")
-def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_json=False,
-                     agent=False, agent_apply=None):
+def cmd_br_summarize(
+    api_key=None, base_url=None, model=None, batch_size=50, as_json=False, agent=False, agent_apply=None
+):
     """LLM semantic enrichment — add business context to extracted rules"""
     from roam.business_rules.summarizer import RuleSummarizer
 
@@ -192,11 +249,19 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
 
     with sqlite3.connect(db_path) as conn:
         for r in enriched:
-            conn.execute("""UPDATE business_rules
+            conn.execute(
+                """UPDATE business_rules
                 SET domain=?, flow=?, description=?, severity=?, merge_with=?, updated_at=datetime('now')
                 WHERE rule_id=?""",
-                (r.get("domain", ""), r.get("flow", ""), r.get("description", ""),
-                 r.get("severity", "medium"), r.get("merge_with"), r["rule_id"]))
+                (
+                    r.get("domain", ""),
+                    r.get("flow", ""),
+                    r.get("description", ""),
+                    r.get("severity", "medium"),
+                    r.get("merge_with"),
+                    r["rule_id"],
+                ),
+            )
         conn.commit()
 
     merges = [r for r in enriched if r.get("merge_with")]
@@ -206,6 +271,14 @@ def cmd_br_summarize(api_key=None, base_url=None, model=None, batch_size=50, as_
         click.echo(f"Summarized {len(enriched)} rules" + (f" ({len(merges)} merged)" if merges else ""))
 
 
+@roam_capability(
+    name="business-rules-graph",
+    category="analysis",
+    summary="Build/rebuild the business rule knowledge graph with conflict detection.",
+    inputs=["business_rules"],
+    outputs=["graph", "edges", "conflicts"],
+    examples=["roam business-rules graph", "roam business-rules graph --stats"],
+)
 @click.command("business-rules-graph")
 @click.option("--stats", is_flag=True, help="Show statistics only")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
@@ -234,6 +307,14 @@ def cmd_br_graph(stats=False, as_json=False, workspace=None):
                     click.echo(f"  {et}: {n}")
 
 
+@roam_capability(
+    name="business-rules-check",
+    category="review",
+    summary="Detect business rule conflicts including type mismatches, permission changes, and cross-domain violations.",
+    inputs=["business_rules", "snapshots"],
+    outputs=["conflicts"],
+    examples=["roam business-rules check", "roam business-rules check --snapshot-id 1"],
+)
 @click.command("business-rules-check")
 @click.option("--snapshot-id", type=int, default=None)
 @click.option("--json", "as_json", is_flag=True)
@@ -261,9 +342,23 @@ def cmd_br_check(snapshot_id=None, as_json=False, workspace=None):
             all_conflicts.append((proj_tag, c))
 
     if as_json:
-        click.echo(json.dumps([{"source": ptag, "type": c.conflict_type, "severity": c.severity,
-                                "description": c.description, "rule_a": c.rule_a, "rule_b": c.rule_b}
-                               for ptag, c in all_conflicts], indent=2, ensure_ascii=False))
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "source": ptag,
+                        "type": c.conflict_type,
+                        "severity": c.severity,
+                        "description": c.description,
+                        "rule_a": c.rule_a,
+                        "rule_b": c.rule_b,
+                    }
+                    for ptag, c in all_conflicts
+                ],
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
     elif not all_conflicts:
         click.echo("No conflicts detected.")
     else:
@@ -271,6 +366,14 @@ def cmd_br_check(snapshot_id=None, as_json=False, workspace=None):
             click.echo(f"{ptag}[{c.severity.upper()}] {c.conflict_type}: {c.description}")
 
 
+@roam_capability(
+    name="business-rules-diff",
+    category="review",
+    summary="Diff two business rule snapshots to identify added, removed, and modified rules.",
+    inputs=["snapshots"],
+    outputs=["diff", "added", "removed"],
+    examples=["roam business-rules diff", "roam business-rules diff --from 1 --to 2"],
+)
 @click.command("business-rules-diff")
 @click.option("--from", "from_id", type=int)
 @click.option("--to", "to_id", type=int)
@@ -299,6 +402,14 @@ def cmd_br_diff(from_id=None, to_id=None):
         click.echo(f"  Removed: {len(result['removed'])}")
 
 
+@roam_capability(
+    name="business-rules-snapshot",
+    category="workflow",
+    summary="Create a timestamped snapshot of the current business rules for version tracking and diff.",
+    inputs=["business_rules"],
+    outputs=["snapshot_id"],
+    examples=["roam business-rules snapshot", "roam business-rules snapshot --label v1.0"],
+)
 @click.command("business-rules-snapshot")
 @click.option("--label", default="")
 def cmd_br_snapshot(label=""):
@@ -311,6 +422,14 @@ def cmd_br_snapshot(label=""):
     click.echo(f"Snapshot {sid} created" + (f": {label}" if label else ""))
 
 
+@roam_capability(
+    name="business-rules-list",
+    category="exploration",
+    summary="List all extracted business rules with optional filtering by type, domain, and JSON output.",
+    inputs=["business_rules"],
+    outputs=["rule_list"],
+    examples=["roam business-rules list", "roam business-rules list --type validation --json"],
+)
 @click.command("business-rules-list")
 @click.option("--type", "rule_type", default=None)
 @click.option("--domain", default=None)
@@ -343,6 +462,14 @@ def cmd_br_list(rule_type=None, domain=None, as_json=False):
             click.echo(f"{r['rule_id']:<50} {r['rule_type']:<16} {r['domain']:<12} {r['description'][:40]}")
 
 
+@roam_capability(
+    name="business-rules-explain",
+    category="exploration",
+    summary="Show detailed information about a single business rule including related rules and graph edges.",
+    inputs=["rule_id"],
+    outputs=["rule_detail", "related_rules"],
+    examples=["roam business-rules explain RULE-001", "roam business-rules explain RULE-001 --json"],
+)
 @click.command("business-rules-explain")
 @click.argument("rule_id")
 @click.option("--json", "as_json", is_flag=True)
@@ -382,6 +509,7 @@ def cmd_br_explain(rule_id, as_json=False):
 def _root():
     try:
         from roam.db.connection import find_project_root
+
         return find_project_root()
     except Exception:
         return "."

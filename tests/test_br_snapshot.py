@@ -2,12 +2,12 @@
 
 覆盖: 创建快照 / diff 对比
 """
+
 import json
 import sqlite3
 import tempfile
 from pathlib import Path
 
-import pytest
 from roam.business_rules.snapshot import RuleSnapshot
 
 
@@ -96,6 +96,7 @@ class TestSnapshotCreate:
 
             snapshot = RuleSnapshot(db_path)
             snap1 = snapshot.create(label="v1")  # 2 条规则
+            assert snap1 == 1
 
             # 添加新规则
             conn2 = sqlite3.connect(db_path)
