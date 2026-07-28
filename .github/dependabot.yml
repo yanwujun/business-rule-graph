@@ -6,8 +6,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
     commit-message:
       prefix: "deps"
     # Let newly published versions mature before routine lock refreshes.
@@ -38,9 +36,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - ci
     commit-message:
       prefix: "ci"
     # GitHub Actions supports the ecosystem-wide default cooldown. Keep the
