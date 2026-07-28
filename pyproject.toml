@@ -129,7 +129,7 @@ dev = [
     # so the test suite has a consistent reference parser to assert against.
     "pyyaml>=6.0",
     "ruff>=0.4",
-    "build>=1.0",
+    "build>=1.5.0",
     "twine>=5.0",
     # README/demo asset generation: dev/generate_terminal_demo_gif.py imports
     # PIL directly. Keep it in the dev extra rather than the runtime package.
