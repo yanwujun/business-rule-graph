@@ -280,7 +280,7 @@ function renderGraph() {
       forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 150, springConstant: 0.08 },
       stabilization: { iterations: 100 },
     } : false,
-    layout: useForceLayout ? undefined : { hierarchical: { direction: 'LR', sortMethod: 'directed', nodeSpacing: 150, levelSeparation: 200 } },
+    ...(useForceLayout ? {} : { layout: { hierarchical: { direction: 'LR', sortMethod: 'directed', nodeSpacing: 150, levelSeparation: 200 } } }),
     interaction: { hover: true, tooltipDelay: 200, zoomView: true, dragView: true },
     nodes: { shape: 'dot', borderWidth: 1.5 },
     edges: { smooth: { type: 'continuous' } },
