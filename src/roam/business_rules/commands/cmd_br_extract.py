@@ -513,3 +513,205 @@ def _root():
         return find_project_root()
     except Exception:
         return "."
+
+
+# ── business-rules-flows ────────────────────────────────────────────────────
+
+_RULE_TYPE_ICONS = {
+    "validation": "⚡",
+    "authorization": "🔒",
+    "workflow": "🔄",
+    "calculation": "🧮",
+    "data_integrity": "📊",
+    "process": "🔀",
+    "configuration": "⚙️",
+    "integration": "🔗",
+}
+
+
+def _flow_tree(domains: dict) -> str:
+    """Render domain→flow→rules as a Unicode tree."""
+    lines = [f"📦 business-rules ({sum(len(f['rules']) for d in domains.values() for f in d['flows'].values())} rules)"]
+    _tree_recurse(domains, lines, 0)
+    return "\n".join(lines)
+
+
+def _tree_recurse(domains: dict, lines: list, depth: int) -> None:
+    domain_names = sorted(domains.keys())
+    for i, dn in enumerate(domain_names):
+        is_last_domain = i == len(domain_names) - 1
+        prefix = "└── " if is_last_domain else "├── "
+        indent = "    " if is_last_domain else "│   "
+        display_name = dn or "未分类"
+        lines.append(f"{'│   ' * depth}{prefix}🏭 {display_name}")
+
+        flows = domains[dn]["flows"]
+        flow_names = sorted(flows.keys())
+        for j, fn in enumerate(flow_names):
+            is_last_flow = j == len(flow_names) - 1
+            f_prefix = "└── " if is_last_flow else "├── "
+            f_indent = "    " if is_last_flow else "│   "
+            f_display = fn or "未分类"
+            lines.append(f"{'│   ' * depth}{indent}{f_prefix}🔀 {f_display}")
+
+            rules = flows[fn]["rules"]
+            for k, rule in enumerate(rules):
+                is_last_rule = k == len(rules) - 1
+                r_prefix = "└── " if is_last_rule else "├── "
+                icon = _RULE_TYPE_ICONS.get(rule.get("rule_type", ""), "•")
+                desc = (rule.get("description") or rule.get("rule_id", "?"))[:80]
+                lines.append(f"{'│   ' * depth}{indent}{f_indent}{r_prefix}{icon} {rule['rule_type']}: {desc}")
+
+
+def _flow_mermaid(domains: dict) -> str:
+    """Render domain→flow→rules as a Mermaid flowchart."""
+    lines = ["flowchart TD"]
+    node_id = 0
+
+    for dn in sorted(domains.keys()):
+        did = f"D{node_id}"
+        node_id += 1
+        lines.append(f'  subgraph {did}["🏭 {dn or "未分类"}"]')
+
+        flows = domains[dn]["flows"]
+        for fn in sorted(flows.keys()):
+            fid = f"F{node_id}"
+            node_id += 1
+            lines.append(f'    subgraph {fid}["🔀 {fn or "未分类"}"]')
+
+            for rule in flows[fn]["rules"]:
+                rid = f"R{node_id}"
+                node_id += 1
+                icon = _RULE_TYPE_ICONS.get(rule.get("rule_type", ""), "•")
+                desc = (rule.get("description") or rule.get("rule_id", "?"))[:40].replace('"', "'")
+                lines.append(f'      {rid}["{icon} {desc}"]')
+
+            lines.append("    end")
+        lines.append("  end")
+
+    return "\n".join(lines)
+
+
+@roam_capability(
+    name="business-rules-flows",
+    category="business-rules",
+    summary="Visualize business rules grouped by domain and flow",
+    maturity="alpha",
+    mcp_expose=True,
+    mcp_preset=("business-rules",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=False,
+)
+@click.command("business-rules-flows")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["tree", "mermaid", "json"], case_sensitive=False),
+    default="tree",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "--domain",
+    "domain_filter",
+    default=None,
+    help="Filter by domain name (substring match).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write to file instead of stdout.",
+)
+@click.pass_context
+def cmd_br_flows(ctx, fmt, domain_filter, output_path):
+    """Visualize business rules as a domain→flow hierarchy.
+
+    Reads rules from the Roam index and groups them by domain
+    and flow for a high-level view of the business logic structure.
+
+    Output formats:
+      tree    — Unicode tree (default)
+      mermaid — Mermaid flowchart (paste into markdown)
+      json    — Machine-readable JSON
+    """
+    db_path = _get_db_path()
+    if not _os.path.exists(db_path):
+        click.echo("Error: No index found. Run `roam business-rules extract` first.", err=True)
+        return
+
+    rules = _load_rules_from_db(db_path, domain_filter)
+    if not rules:
+        click.echo("No business rules found. Run `roam business-rules extract` first.")
+        return
+
+    domains = _build_flow_hierarchy(rules)
+
+    fmt = fmt.lower()
+    if fmt == "tree":
+        output = _flow_tree(domains)
+    elif fmt == "mermaid":
+        output = _flow_mermaid(domains)
+    elif fmt == "json":
+        output = json.dumps(domains, ensure_ascii=False, indent=2, default=str)
+    else:
+        output = _flow_tree(domains)
+
+    if output_path:
+        Path(output_path).write_text(output, encoding="utf-8")
+        click.echo(f"Written to {output_path}")
+    else:
+        click.echo(output)
+
+
+def _load_rules_from_db(db_path: str, domain_filter: str | None = None) -> list[dict]:
+    """Load business rules from the DB, optionally filtered by domain."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if domain_filter:
+            rows = conn.execute(
+                "SELECT * FROM business_rules WHERE domain LIKE ? ORDER BY domain, flow, source_file",
+                (f"%{domain_filter}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM business_rules ORDER BY domain, flow, source_file"
+            ).fetchall()
+    finally:
+        conn.close()
+
+    rules = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["params"] = json.loads(d["params"]) if isinstance(d["params"], str) else d["params"]
+        except (json.JSONDecodeError, TypeError):
+            d["params"] = {}
+        rules.append(d)
+    return rules
+
+
+def _build_flow_hierarchy(rules: list[dict]) -> dict:
+    """Build domain→flow→rules hierarchy from a list of rules."""
+    domains: dict[str, dict] = {}
+    for rule in rules:
+        domain = (rule.get("domain") or "").strip()
+        flow = (rule.get("flow") or "").strip()
+        domains.setdefault(domain, {"flows": {}})
+        domains[domain]["flows"].setdefault(flow, {"rules": []})
+        domains[domain]["flows"][flow]["rules"].append({
+            "rule_id": rule.get("rule_id", ""),
+            "rule_type": rule.get("rule_type", ""),
+            "description": rule.get("description", ""),
+            "severity": rule.get("severity", ""),
+            "source_file": rule.get("source_file", ""),
+            "source_line": rule.get("source_line", 0),
+        })
+    return domains

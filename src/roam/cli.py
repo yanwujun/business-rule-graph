@@ -357,6 +357,7 @@ _COMMANDS = {
     "check-rules": ("roam.commands.cmd_check_rules", "check_rules_command"),
     "codeowners": ("roam.commands.cmd_codeowners", "codeowners"),
     "dashboard": ("roam.commands.cmd_dashboard", "dashboard"),
+    "dashboard-serve": ("roam.commands.cmd_dashboard_serve", "dashboard_serve"),
     "drift": ("roam.commands.cmd_drift", "drift"),
     "dev-profile": ("roam.commands.cmd_dev_profile", "dev_profile"),
     "secrets": ("roam.commands.cmd_secrets", "secrets"),
@@ -488,6 +489,10 @@ _COMMANDS = {
         "roam.business_rules.commands.cmd_br_extract",
         "cmd_br_explain",
     ),
+    "business-rules-flows": (
+        "roam.business_rules.commands.cmd_br_extract",
+        "cmd_br_flows",
+    ),
 }
 
 # Command categories for organized --help display
@@ -510,6 +515,7 @@ _CATEGORIES = {
         # invokable, but removed from the categorised --help panel so it
         # no longer reads as a recommended starting verb.
         "dashboard",
+        "dashboard-serve",
         "tour",
         "describe",
         "minimap",

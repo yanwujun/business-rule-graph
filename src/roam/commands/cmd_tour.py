@@ -587,6 +587,13 @@ def _write_or_echo_tour(output, write_file):
 )
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.option(
+    "--onboard",
+    "onboard_mode",
+    is_flag=True,
+    default=False,
+    help="Generate a full onboarding guide (project overview, layers, file map, complexity hotspots).",
+)
+@click.option(
     "--focus",
     "focus_path",
     type=str,
@@ -594,7 +601,7 @@ def _write_or_echo_tour(output, write_file):
     help="limit tour items (top symbols, reading order, entries) to files under this path prefix.",
 )
 @click.pass_context
-def tour_command(ctx, write_file, mermaid_mode, focus_path):
+def tour_command(ctx, write_file, mermaid_mode, onboard_mode, focus_path):
     """Generate a codebase onboarding tour.
 
     Produces a structured guide: project overview, top symbols to learn,
@@ -646,7 +653,210 @@ def tour_command(ctx, write_file, mermaid_mode, focus_path):
             return
 
         output = _render_tour_markdown(verdict, langs, stats, top, order, entries)
+        if onboard_mode:
+            # Fetch extra data for full onboarding guide
+            hotspots = _complexity_hotspots(conn)
+            layers_info = _layer_details(conn, G)
+            file_map = _file_map(conn, order)
+            conventions = _detect_conventions(conn)
+            output = _render_onboard_markdown(output, langs, stats, layers_info, file_map, hotspots, conventions)
         _write_or_echo_tour(output, write_file)
+
+
+# ── Onboard-mode helpers ─────────────────────────────────────────────────────
+
+def _complexity_hotspots(conn, limit: int = 10) -> list[dict]:
+    """Return top-N complexity hotspots across the codebase."""
+    rows = conn.execute(
+        """
+        SELECT f.path AS file, f.line_count,
+               COALESCE(fs.complexity, 0) AS complexity,
+               COALESCE(fs.health_score, 10) AS health,
+               (SELECT COUNT(*) FROM symbols s WHERE s.file_id = f.id) AS symbol_count
+        FROM files f
+        LEFT JOIN file_stats fs ON f.id = fs.file_id
+        WHERE f.file_role = 'source'
+        ORDER BY COALESCE(fs.complexity, 0) DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [{"file": r[0], "lines": r[1], "complexity": round(r[2], 1), "health": round(r[3], 1) if r[3] else 10, "symbols": r[4]} for r in rows]
+
+
+def _layer_details(conn, G) -> list[dict]:
+    """Return architecture layers with descriptions and key files."""
+    layers_raw = detect_layers(G)
+    if not layers_raw:
+        return []
+
+    # Group by layer ID
+    layer_groups: dict[int, list[int]] = {}
+    for sym_id, layer_id in layers_raw.items():
+        layer_groups.setdefault(layer_id, []).append(sym_id)
+
+    # Get distinct filenames for each layer (sample up to 50 symbols per layer)
+    result = []
+    for lid in sorted(layer_groups.keys()):
+        sym_ids = layer_groups[lid][:50]
+        if not sym_ids:
+            continue
+        placeholders = ",".join("?" for _ in sym_ids)
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT f.path
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            WHERE s.id IN ({placeholders})
+            ORDER BY f.path
+            LIMIT 5
+            """,
+            sym_ids,
+        ).fetchall()
+        top_files = [r[0] for r in rows]
+        # Show top 10 layers, group the rest
+        result.append({
+            "id": lid,
+            "name": f"Layer {lid}",
+            "description": f"{len(layer_groups[lid])} symbols spanning {len(top_files)}+ files",
+            "symbol_count": len(layer_groups[lid]),
+            "top_files": top_files,
+        })
+
+    # Limit to top 10 layers by symbol count, merge rest
+    result.sort(key=lambda x: x["symbol_count"], reverse=True)
+    if len(result) > 10:
+        shown = result[:10]
+        rest_count = sum(l["symbol_count"] for l in result[10:])
+        rest_files = set()
+        for l in result[10:]:
+            rest_files.update(l["top_files"])
+        shown.append({
+            "id": -1,
+            "name": "Remaining layers",
+            "description": f"{rest_count} symbols across {len(result)-10} layers",
+            "symbol_count": rest_count,
+            "top_files": list(rest_files)[:5],
+        })
+        result = shown
+    return result
+
+
+def _file_map(conn, order) -> list[dict]:
+    """Return a file map organized by layer with role descriptions."""
+    if not order:
+        return []
+
+    # Get complexity/health for files in the reading order
+    file_paths = [item["file"] for item in order[:30]]
+    if not file_paths:
+        return []
+
+    placeholders = ",".join("?" for _ in file_paths)
+    rows = conn.execute(
+        f"""
+        SELECT f.path, f.language, f.line_count,
+               COALESCE(fs.complexity, 0),
+               (SELECT COUNT(*) FROM symbols s WHERE s.file_id = f.id) AS sym_count
+        FROM files f
+        LEFT JOIN file_stats fs ON f.id = fs.file_id
+        WHERE f.path IN ({placeholders})
+        """,
+        file_paths,
+    ).fetchall()
+
+    file_info = {r[0]: {"language": r[1], "lines": r[2], "complexity": round(r[3], 1), "symbols": r[4]} for r in rows}
+
+    return [
+        {
+            "file": item["file"],
+            "layer": item["layer"],
+            "info": file_info.get(item["file"], {"lines": "?", "complexity": "?", "symbols": "?"}),
+        }
+        for item in order[:30]
+    ]
+
+
+def _detect_conventions(conn) -> list[str]:
+    """Detect project conventions from the codebase."""
+    conventions = []
+
+    # Check for linters/formatters
+    config_files = conn.execute(
+        "SELECT path FROM files WHERE path LIKE '%.eslintrc%' OR path LIKE '%.prettierrc%' OR path LIKE '%black%' OR path LIKE '%ruff.toml'"
+    ).fetchall()
+    if config_files:
+        conventions.append(f"Linting/formatting: detected ({len(config_files)} configs)")
+
+    # Check for CI/CD
+    ci_files = conn.execute(
+        "SELECT path FROM files WHERE path LIKE '%.github/workflows/%' OR path LIKE '%Jenkinsfile%' OR path LIKE '%.gitlab-ci%'"
+    ).fetchall()
+    if ci_files:
+        conventions.append(f"CI/CD: {len(ci_files)} workflow(s) detected")
+
+    # Check for testing framework
+    test_count = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'test'").fetchone()[0]
+    if test_count > 0:
+        conventions.append(f"Testing: {test_count} test files")
+
+    # Check for documentation
+    doc_files = conn.execute("SELECT path FROM files WHERE path LIKE '%README%' OR path LIKE '%CONTRIBUTING%'")
+    doc_paths = [r[0] for r in doc_files.fetchall()]
+    if doc_paths:
+        conventions.append(f"Documentation: {', '.join(doc_paths[:3])}")
+
+    return conventions
+
+
+def _render_onboard_markdown(base_output: str, langs, stats, layers_info, file_map, hotspots, conventions) -> str:
+    """Append onboard-specific sections to the base tour markdown."""
+    lines = [base_output]
+
+    # Architecture Layers
+    if layers_info:
+        lines.append("---\n")
+        lines.append("## Architecture Layers\n")
+        for layer in layers_info:
+            lines.append(f"### {layer['name']}\n")
+            lines.append(f"{layer['description']}\n")
+            lines.append("**Key files:**")
+            for f in layer.get("top_files", [])[:5]:
+                lines.append(f"  - `{f}`")
+            lines.append("")
+
+    # File Map
+    if file_map:
+        lines.append("---\n")
+        lines.append("## File Map\n")
+        lines.append("| File | Layer | Lang | Lines | Complexity | Symbols |")
+        lines.append("|------|-------|------|-------|------------|---------|")
+        for item in file_map:
+            info = item["info"]
+            lines.append(f"| `{item['file']}` | {item['layer']} | {info.get('language', '?')} | {info.get('lines', '?')} | {info.get('complexity', '?')} | {info.get('symbols', '?')} |")
+        lines.append("")
+
+    # Complexity Hotspots
+    if hotspots:
+        lines.append("---\n")
+        lines.append("## ⚠️ Complexity Hotspots\n")
+        lines.append("These files have the highest complexity — approach with care:\n")
+        lines.append("| File | Lines | Complexity | Health | Symbols |")
+        lines.append("|------|-------|------------|--------|---------|")
+        for h in hotspots[:10]:
+            health_icon = "🔴" if h["health"] < 5 else ("🟡" if h["health"] < 7 else "🟢")
+            lines.append(f"| `{h['file']}` | {h['lines']} | {h['complexity']} | {health_icon} {h['health']} | {h['symbols']} |")
+        lines.append("")
+
+    # Conventions
+    if conventions:
+        lines.append("---\n")
+        lines.append("## Project Conventions\n")
+        for c in conventions:
+            lines.append(f"- {c}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # Keep the existing module attribute for lazy CLI loading and direct test imports.

@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roam CodeGraph Dashboard</title>
+<script src="https://visjs.github.io/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e1e4e8; height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+header { background: #161b22; border-bottom: 1px solid #30363d; padding: 8px 16px; display: flex; align-items: center; gap: 12px; min-height: 48px; }
+header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; white-space: nowrap; }
+header .search { flex: 1; max-width: 400px; }
+header .search input { width: 100%; padding: 6px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; }
+header .search input:focus { outline: none; border-color: #58a6ff; }
+header .controls { display: flex; gap: 8px; align-items: center; }
+header button { padding: 5px 12px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; cursor: pointer; font-size: 12px; white-space: nowrap; }
+header button:hover { background: #30363d; }
+header button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+header .stats { font-size: 12px; color: #8b949e; white-space: nowrap; }
+
+/* Layout */
+main { flex: 1; display: flex; overflow: hidden; }
+
+/* Sidebar */
+aside { width: 260px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+aside h3 { font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px; margin-bottom: 4px; }
+aside .section { background: #0d1117; border-radius: 6px; padding: 10px; border: 1px solid #21262d; }
+aside .section p { font-size: 12px; color: #8b949e; margin: 2px 0; }
+aside .section p strong { color: #c9d1d9; }
+aside label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #c9d1d9; cursor: pointer; padding: 3px 0; }
+aside label input { accent-color: #58a6ff; }
+aside .layer-item { font-size: 12px; padding: 4px 8px; border-radius: 4px; cursor: pointer; color: #c9d1d9; margin: 2px 0; }
+aside .layer-item:hover, aside .layer-item.selected { background: #1f6feb20; color: #58a6ff; }
+aside .layer-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+/* Graph area */
+#graph { flex: 1; background: #0d1117; position: relative; }
+
+/* Info panel */
+#info { width: 320px; background: #161b22; border-left: 1px solid #30363d; overflow-y: auto; padding: 16px; display: none; }
+#info.visible { display: block; }
+#info h2 { font-size: 15px; color: #58a6ff; margin-bottom: 8px; word-break: break-all; }
+#info .field { margin-bottom: 8px; }
+#info .field-label { font-size: 11px; text-transform: uppercase; color: #8b949e; }
+#info .field-value { font-size: 13px; color: #c9d1d9; word-break: break-all; }
+#info .close-btn { float: right; background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; }
+#info .close-btn:hover { color: #f85149; }
+
+/* Kind badges */
+.badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 600; margin-left: 4px; }
+.bg-class { background: #2ea04330; color: #3fb950; }
+.bg-function { background: #d2992230; color: #d29922; }
+.bg-method { background: #a371f730; color: #a371f7; }
+.bg-interface { background: #58a6ff30; color: #58a6ff; }
+.bg-file { background: #8b949e30; color: #8b949e; }
+.bg-other { background: #f8514930; color: #f85149; }
+
+/* Loading */
+#loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: #8b949e; }
+#loading .spinner { width: 36px; height: 36px; border: 3px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Legend in graph area */
+#legend { position: absolute; bottom: 16px; left: 16px; background: #161b22cc; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 11px; display: flex; gap: 12px; flex-wrap: wrap; backdrop-filter: blur(8px); }
+.legend-item { display: flex; align-items: center; gap: 4px; color: #8b949e; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔷 Roam CodeGraph</h1>
+  <div class="search"><input type="text" id="searchInput" placeholder="Search symbols, files... (e.g. AuditService)" onkeyup="handleSearch(event)"></div>
+  <div class="controls">
+    <button id="btnSymbols" class="active" onclick="switchMode('symbols')">Symbols</button>
+    <button id="btnFiles" onclick="switchMode('files')">Files</button>
+    <button id="btnBoth" onclick="switchMode('both')">Both</button>
+    <button id="btnLayout" onclick="toggleLayout()">Layout: Force</button>
+    <span class="stats" id="statInfo"></span>
+  </div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div class="section">
+      <h3>📊 Project</h3>
+      <p id="projName">Loading...</p>
+      <p id="projStats"></p>
+    </div>
+    <div class="section">
+      <h3>🔍 Filter by Kind</h3>
+      <div id="kindFilters"></div>
+    </div>
+    <div class="section">
+      <h3>📐 Layers</h3>
+      <div id="layerList"><p style="font-size:12px;color:#8b949e">Loading...</p></div>
+    </div>
+    <div class="section">
+      <h3>🔗 Edge Types</h3>
+      <div id="edgeFilters"></div>
+    </div>
+    <div class="section">
+      <h3>🎯 Quick Links</h3>
+      <p style="font-size:11px;color:#8b949e;line-height:1.6">
+        Reset view: double-click background<br>
+        Zoom: scroll wheel<br>
+        Pan: drag background<br>
+        Select: click node
+      </p>
+    </div>
+  </aside>
+
+  <div id="graph">
+    <div id="loading"><div class="spinner"></div>Loading graph data...</div>
+    <div id="legend"></div>
+  </div>
+
+  <div id="info">
+    <button class="close-btn" onclick="closeInfo()">×</button>
+    <div id="infoContent"></div>
+  </div>
+</main>
+
+<script>
+// ── State ──
+let allData = null;
+let network = null;
+let currentMode = 'symbols';
+let useForceLayout = true;
+let selectedNode = null;
+const KIND_COLORS = {
+  'class': '#3fb950', 'struct': '#3fb950', 'interface': '#58a6ff', 'trait': '#58a6ff',
+  'function': '#d29922', 'method': '#a371f7', 'constructor': '#a371f7',
+  'enum': '#f0883e', 'module': '#f0883e', 'variable': '#db6d28', 'field': '#db6d28',
+  'file': '#8b949e', 'other': '#f85149'
+};
+const EDGE_COLORS = {
+  'calls': '#3fb950', 'imports': '#58a6ff', 'inherits': '#a371f7',
+  'implements': '#a371f7', 'contains': '#8b949e', 'references': '#d29922',
+  'overrides': '#f0883e', 'other': '#484f58'
+};
+const LAYER_COLORS = ['#3fb950','#58a6ff','#a371f7','#d29922','#f0883e','#db6d28','#f85149','#8b949e'];
+
+// ── Load data ──
+async function loadData() {
+  try {
+    const resp = await fetch('/api/graph');
+    allData = await resp.json();
+    document.getElementById('loading').style.display = 'none';
+    initUI();
+    renderGraph();
+  } catch(e) {
+    document.getElementById('loading').innerHTML = `<p style="color:#f85149">Failed to load: ${e.message}</p>`;
+  }
+}
+
+// ── Init sidebar ──
+function initUI() {
+  const p = allData.project;
+  document.getElementById('projName').innerHTML = `<strong>${esc(p.name)}</strong>`;
+  document.getElementById('projStats').innerHTML = `
+    ${p.total_symbols.toLocaleString()} symbols<br>
+    ${p.total_files.toLocaleString()} files<br>
+    ${(p.languages || []).join(', ') || 'N/A'}
+  `;
+
+  // Kind filters
+  const kindCounts = allData.stats?.kind_distribution || {};
+  const kinds = Object.keys(kindCounts).sort((a,b) => kindCounts[b] - kindCounts[a]);
+  const kf = document.getElementById('kindFilters');
+  kinds.forEach(k => {
+    const cnt = kindCounts[k];
+    if (cnt < 2) return;
+    const color = KIND_COLORS[k] || KIND_COLORS['other'];
+    kf.innerHTML += `<label><input type="checkbox" checked data-kind="${k}" onchange="renderGraph()">
+      <span class="legend-dot" style="background:${color}"></span> ${k} (${cnt})
+    </label>`;
+  });
+
+  // Edge filters
+  const allEdgeKinds = [...new Set((allData.edges || []).map(e => e.kind))].sort();
+  const ef = document.getElementById('edgeFilters');
+  allEdgeKinds.forEach(k => {
+    ef.innerHTML += `<label><input type="checkbox" checked data-edge="${k}" onchange="renderGraph()">
+      ${k}
+    </label>`;
+  });
+
+  // Layers
+  const ll = document.getElementById('layerList');
+  if (allData.layers && allData.layers.length > 0) {
+    ll.innerHTML = '';
+    allData.layers.forEach((layer, i) => {
+      const color = LAYER_COLORS[i % LAYER_COLORS.length];
+      ll.innerHTML += `<div class="layer-item" onclick="focusLayer(${i})">
+        <span class="layer-dot" style="background:${color}"></span>${esc(layer.name)} (${layer.nodes.length})
+      </div>`;
+    });
+  }
+}
+
+// ── Build graph ──
+function renderGraph() {
+  const enabledKinds = new Set();
+  document.querySelectorAll('#kindFilters input[type=checkbox]:checked').forEach(cb => enabledKinds.add(cb.dataset.kind));
+  const enabledEdges = new Set();
+  document.querySelectorAll('#edgeFilters input[type=checkbox]:checked').forEach(cb => enabledEdges.add(cb.dataset.edge));
+
+  // Filter nodes
+  let nodes = allData.nodes.filter(n => {
+    if (currentMode === 'symbols') return n.node_type === 'symbol' && enabledKinds.has(n.kind);
+    if (currentMode === 'files') return n.node_type === 'file';
+    return enabledKinds.has(n.kind === 'file' ? 'file' : n.kind);
+  });
+
+  // If too many nodes, take top by pagerank
+  const MAX_NODES = 500;
+  if (nodes.length > MAX_NODES && currentMode === 'symbols') {
+    nodes.sort((a,b) => b.pagerank - a.pagerank);
+    nodes = nodes.slice(0, MAX_NODES);
+  }
+  if (currentMode === 'both' && nodes.length > 800) {
+    nodes.sort((a,b) => b.pagerank - a.pagerank);
+    nodes = nodes.slice(0, 800);
+  }
+
+  const nodeIdSet = new Set(nodes.map(n => n.id));
+
+  // Filter edges
+  const edges = (allData.edges || []).filter(e =>
+    nodeIdSet.has(e.source) && nodeIdSet.has(e.target) && enabledEdges.has(e.kind)
+  );
+
+  // Build vis nodes
+  const visNodes = nodes.map(n => {
+    const color = KIND_COLORS[n.kind] || KIND_COLORS['other'];
+    const size = n.kind === 'file' ? 12 : Math.max(8, Math.min(30, 8 + (n.pagerank || 0) * 100));
+    const label = n.kind === 'file' ? n.name : n.name;
+    return {
+      id: n.id,
+      label: label,
+      color: { background: color, border: '#21262d', highlight: { background: color, border: '#fff' } },
+      size: size,
+      font: { size: 11, color: '#c9d1d9', face: 'monospace' },
+      title: `<b>${esc(n.qualified_name || n.name)}</b><br>${esc(n.kind)} | ${esc(n.file)}:${n.line || '?'}`,
+    };
+  });
+
+  const visEdges = edges.map(e => {
+    const color = EDGE_COLORS[e.kind] || EDGE_COLORS['other'];
+    return {
+      from: e.source,
+      to: e.target,
+      color: { color: color + '60', highlight: color },
+      arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+      width: Math.max(0.5, e.weight || 0.5),
+      title: e.kind,
+    };
+  });
+
+  // Legend
+  const legend = document.getElementById('legend');
+  legend.innerHTML = [...new Set(nodes.map(n => n.kind))].slice(0, 10).map(k => {
+    const color = KIND_COLORS[k] || KIND_COLORS['other'];
+    return `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${k}</div>`;
+  }).join('');
+
+  // Stats
+  document.getElementById('statInfo').textContent = `${visNodes.length} nodes | ${visEdges.length} edges`;
+
+  // Create network
+  const container = document.getElementById('graph');
+  const data = { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) };
+  const options = {
+    physics: useForceLayout ? {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 150, springConstant: 0.08 },
+      stabilization: { iterations: 100 },
+    } : false,
+    layout: useForceLayout ? undefined : { hierarchical: { direction: 'LR', sortMethod: 'directed', nodeSpacing: 150, levelSeparation: 200 } },
+    interaction: { hover: true, tooltipDelay: 200, zoomView: true, dragView: true },
+    nodes: { shape: 'dot', borderWidth: 1.5 },
+    edges: { smooth: { type: 'continuous' } },
+  };
+
+  if (network) {
+    network.setData(data);
+    network.setOptions(options);
+  } else {
+    network = new vis.Network(container, data, options);
+    network.on('click', function(params) {
+      if (params.nodes.length > 0) showNodeInfo(params.nodes[0]);
+      else closeInfo();
+    });
+  }
+}
+
+// ── Switch mode ──
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('header button[id^="btn"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn' + mode.charAt(0).toUpperCase() + mode.slice(1)).classList.add('active');
+  renderGraph();
+}
+
+// ── Toggle layout ──
+function toggleLayout() {
+  useForceLayout = !useForceLayout;
+  document.getElementById('btnLayout').textContent = 'Layout: ' + (useForceLayout ? 'Force' : 'Hierarchical');
+  renderGraph();
+}
+
+// ── Node info ──
+function showNodeInfo(nodeId) {
+  const node = allData.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  selectedNode = node;
+  const panel = document.getElementById('info');
+  panel.classList.add('visible');
+
+  const kindBadge = `<span class="badge bg-${node.kind in KIND_COLORS ? node.kind : 'other'}">${node.kind}</span>`;
+  let html = `<h2>${esc(node.name)} ${kindBadge}</h2>`;
+  html += `<div class="field"><div class="field-label">Qualified Name</div><div class="field-value">${esc(node.qualified_name || '—')}</div></div>`;
+  html += `<div class="field"><div class="field-label">File</div><div class="field-value">${esc(node.file)}${node.line ? ':' + node.line : ''}</div></div>`;
+  if (node.kind !== 'file') {
+    html += `<div class="field"><div class="field-label">PageRank</div><div class="field-value">${node.pagerank}</div></div>`;
+    html += `<div class="field"><div class="field-label">Complexity</div><div class="field-value">${node.complexity}</div></div>`;
+    html += `<div class="field"><div class="field-label">Visibility</div><div class="field-value">${node.visibility || 'public'}</div></div>`;
+    html += `<div class="field"><div class="field-label">Lines</div><div class="field-value">${node.line}–${node.line_end}</div></div>`;
+  } else {
+    html += `<div class="field"><div class="field-label">Language</div><div class="field-value">${node.language || 'N/A'}</div></div>`;
+    html += `<div class="field"><div class="field-label">Lines</div><div class="field-value">${node.line_count}</div></div>`;
+    html += `<div class="field"><div class="field-label">Complexity</div><div class="field-value">${node.complexity}</div></div>`;
+  }
+
+  // Connected nodes
+  const connected = (allData.edges || []).filter(e => e.source === nodeId || e.target === nodeId).slice(0, 20);
+  if (connected.length > 0) {
+    html += `<div class="field"><div class="field-label">Relations (${connected.length})</div></div>`;
+    connected.forEach(e => {
+      const otherId = e.source === nodeId ? e.target : e.source;
+      const otherNode = allData.nodes.find(n => n.id === otherId);
+      const dir = e.source === nodeId ? '→' : '←';
+      const name = otherNode ? otherNode.name : otherId;
+      html += `<div class="field-value" style="font-size:12px;padding:2px 0">${dir} ${esc(name)} <span style="color:#8b949e">(${e.kind})</span></div>`;
+    });
+  }
+
+  document.getElementById('infoContent').innerHTML = html;
+}
+
+function closeInfo() {
+  document.getElementById('info').classList.remove('visible');
+}
+
+// ── Focus layer ──
+function focusLayer(idx) {
+  const layer = allData.layers[idx];
+  if (!layer || !network) return;
+  document.querySelectorAll('.layer-item').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.layer-item')[idx]?.classList.add('selected');
+  const ids = layer.nodes.filter(id => network.body.data.nodes.get(id));
+  if (ids.length > 0) network.selectNodes(ids);
+}
+
+// ── Search ──
+function handleSearch(e) {
+  if (e.key !== 'Enter') return;
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  if (!q || !network) return;
+  const matches = allData.nodes.filter(n => n.name.toLowerCase().includes(q) || (n.qualified_name||'').toLowerCase().includes(q)).slice(0, 5);
+  if (matches.length > 0) {
+    const ids = matches.map(n => n.id).filter(id => network.body.data.nodes.get(id));
+    if (ids.length > 0) {
+      network.selectNodes([ids[0]]);
+      network.focus(ids[0], { scale: 1.5, animation: true });
+    }
+  }
+}
+
+// ── Utils ──
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Init ──
+loadData();
+</script>
+</body>
+</html>
