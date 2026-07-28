@@ -348,7 +348,7 @@ jobs:
           python-version: "3.12.13"
 
       - name: Download the immutable release bundle by artifact ID
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-bundle
@@ -431,7 +431,7 @@ jobs:
       id-token: write  # exchange GitHub OIDC for PyPI Trusted Publishing
     steps:
       - name: Download the immutable bundle by artifact ID
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-bundle
@@ -590,7 +590,7 @@ jobs:
 
       - name: Download the immutable missing-file subset by artifact ID
         if: needs.recover.outputs.publish_required == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.recover.outputs.artifact_id }}
           path: publish-subset
@@ -738,7 +738,7 @@ jobs:
           printf '%s\n' "$verifierenv/bin" >> "$GITHUB_PATH"
 
       - name: Download the published bundle by artifact ID
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-bundle
@@ -1171,13 +1171,13 @@ jobs:
       contents: write  # create a draft, attach evidence, then publish it once
     steps:
       - name: Download the manifest-bound release bundle by artifact ID
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release-bundle
 
       - name: Download the signed evidence by artifact ID
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.sign-evidence.outputs.artifact_id }}
           path: signed-evidence
