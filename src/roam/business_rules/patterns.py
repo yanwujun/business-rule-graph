@@ -84,6 +84,41 @@ TREE_SITTER_QUERIES = {
           )
         )
     """,
+    # if (someCheck(args)) { doBusiness(); } — 正向校验守卫（check/validate/verify/exists）
+    "if_method_check": """
+        (if_statement
+          condition: (method_invocation
+            name: (identifier) @method_name
+            (#match? @method_name "^(check|validate|verify|exists|is[A-Z]|has[A-Z]).*")
+          ) @condition
+        )
+    """,
+    # if (!someCheck(args)) { doBusiness(); } — 取反校验守卫
+    "if_negated_check": """
+        (if_statement
+          condition: (unary_expression
+            operator: "!"
+            operand: (method_invocation
+              name: (identifier) @method_name
+              (#match? @method_name "^(check|validate|verify|exists|is[A-Z]|has[A-Z]).*")
+            )
+          ) @condition
+        )
+    """,
+    # if (...) { x.setStatus(...) / approve(...) / reject(...) } — 状态变更守卫
+    "if_body_status_change": """
+        (if_statement
+          condition: (_) @condition
+          consequence: (block
+            (expression_statement
+              (method_invocation
+                name: (identifier) @status_method
+                (#match? @status_method "^(set|change|update)[A-Z].*[Ss]tatus$|^approve$|^reject$|^submit$|^cancel$|^activate$|^deactivate$")
+              )
+            )
+          )
+        )
+    """,
 }
 
 

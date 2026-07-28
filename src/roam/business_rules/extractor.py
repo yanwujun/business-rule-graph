@@ -89,6 +89,9 @@ class BusinessRuleExtractor:
         if HAS_TREE_SITTER:
             rules.extend(self._extract_tree_sitter(source, file_path, domain))
 
+        # 优先级 1.5: regex 兜底 — 抓 tree-sitter 漏掉的 if 守卫
+        rules.extend(self._extract_if_guards_regex(source, file_path, domain))
+
         # 优先级 2: 方法命名约定
         rules.extend(self._extract_method_names(source, file_path, domain))
 
@@ -147,6 +150,10 @@ class BusinessRuleExtractor:
         rules.extend(self._query_standalone_throw(lang, root, source, file_path, domain))
         # try-catch business exception
         rules.extend(self._query_try_catch(lang, root, source, file_path, domain))
+        # if-else guard patterns (if without throw)
+        rules.extend(self._query_if_method_check(lang, root, source, file_path, domain))
+        rules.extend(self._query_if_negated_check(lang, root, source, file_path, domain))
+        rules.extend(self._query_if_body_status_change(lang, root, source, file_path, domain))
 
         return rules
 
@@ -278,6 +285,137 @@ class BusinessRuleExtractor:
                 )
         except Exception as e:
             logger.debug("try_catch query failed: %s", e)
+        return rules
+
+    # ---- new: if-else guard patterns ----
+
+    def _query_if_method_check(self, lang, root, src, file_path, domain):
+        """Extract `if (checkXxx()) { ... }` — positive guard checks."""
+        rules = []
+        try:
+            query = Query(lang, TREE_SITTER_QUERIES["if_method_check"])
+            captures = query.captures(root)
+            seen = set()
+            for node, capture_name in captures:
+                if capture_name != "condition":
+                    continue
+                line = node.start_point[0] + 1
+                cond_text = src[node.start_byte : node.end_byte].decode(errors="replace")[:80]
+                key = f"{file_path}:{line}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                rules.append(
+                    BusinessRule(
+                        rule_id=f"{file_path}:{line}:guard-check",
+                        rule_type=RuleType.VALIDATION,
+                        domain=domain,
+                        description=f"校验守卫: {cond_text}",
+                        source_file=file_path,
+                        source_line=line,
+                        params={"condition": cond_text, "extraction": "tree_sitter_guard_check"},
+                        extraction="tree_sitter_guard_check",
+                    )
+                )
+        except Exception as e:
+            logger.debug("if_method_check query failed: %s", e)
+        return rules
+
+    def _query_if_negated_check(self, lang, root, src, file_path, domain):
+        """Extract `if (!checkXxx()) { ... }` — negated guard checks."""
+        rules = []
+        try:
+            query = Query(lang, TREE_SITTER_QUERIES["if_negated_check"])
+            captures = query.captures(root)
+            seen = set()
+            for node, capture_name in captures:
+                if capture_name != "condition":
+                    continue
+                line = node.start_point[0] + 1
+                cond_text = src[node.start_byte : node.end_byte].decode(errors="replace")[:80]
+                key = f"{file_path}:{line}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                rules.append(
+                    BusinessRule(
+                        rule_id=f"{file_path}:{line}:negated-guard",
+                        rule_type=RuleType.VALIDATION,
+                        domain=domain,
+                        description=f"取反校验: {cond_text}",
+                        source_file=file_path,
+                        source_line=line,
+                        params={"condition": cond_text, "extraction": "tree_sitter_negated_guard"},
+                        extraction="tree_sitter_negated_guard",
+                    )
+                )
+        except Exception as e:
+            logger.debug("if_negated_check query failed: %s", e)
+        return rules
+
+    def _query_if_body_status_change(self, lang, root, src, file_path, domain):
+        """Extract `if (...) { setStatus(...) / approve(...) }` — status change guards."""
+        rules = []
+        try:
+            query = Query(lang, TREE_SITTER_QUERIES["if_body_status_change"])
+            captures = query.captures(root)
+            seen = set()
+            for node, capture_name in captures:
+                if capture_name != "condition":
+                    continue
+                line = node.start_point[0] + 1
+                cond_text = src[node.start_byte : node.end_byte].decode(errors="replace")[:80]
+                key = f"{file_path}:{line}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                rules.append(
+                    BusinessRule(
+                        rule_id=f"{file_path}:{line}:status-guard",
+                        rule_type=RuleType.WORKFLOW,
+                        domain=domain,
+                        description=f"状态变更条件: {cond_text}",
+                        source_file=file_path,
+                        source_line=line,
+                        params={"condition": cond_text, "extraction": "tree_sitter_status_guard"},
+                        extraction="tree_sitter_status_guard",
+                    )
+                )
+        except Exception as e:
+            logger.debug("if_body_status_change query failed: %s", e)
+        return rules
+
+    # ---- regex fallback: if-line scanner for business guard patterns ----
+
+    _IF_GUARD_RE = re.compile(
+        r"^\s*if\s*\(.*?(check|validate|verify|exists[A-Z]|is[A-Z][a-z]|has[A-Z][a-z])",
+        re.MULTILINE,
+    )
+
+    def _extract_if_guards_regex(self, source: bytes, file_path: str, domain: str) -> list[BusinessRule]:
+        """Regex fallback: scan if-lines for business guard keywords.
+
+        Catches patterns tree-sitter can't see (e.g. local variable holding
+        a check result, or complex binary conditions wrapping a method call).
+        Deduplicates against tree-sitter results by line number.
+        """
+        rules = []
+        text = source.decode(errors="replace")
+        for m in self._IF_GUARD_RE.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            cond_snippet = text[m.start() : m.end()].strip()[:80]
+            rules.append(
+                BusinessRule(
+                    rule_id=f"{file_path}:{line}:if-guard",
+                    rule_type=RuleType.VALIDATION,
+                    domain=domain,
+                    description=f"条件守卫: {cond_snippet}",
+                    source_file=file_path,
+                    source_line=line,
+                    params={"condition": cond_snippet, "extraction": "regex_if_guard"},
+                    extraction="regex_if_guard",
+                )
+            )
         return rules
 
     # ---- method name extraction ----
