@@ -89,7 +89,7 @@ graph-fast = [
 sbom = [
     # CycloneDX 1.7 SBOM emit (with AIBOM extension) for `roam sbom`.
     # Falls back to in-tree minimal emitter when not installed.
-    "cyclonedx-python-lib>=8.0",
+    "cyclonedx-python-lib>=11.11.0",
 ]
 learned = [
     # LightGBM LambdaMART distillation for `roam retrieve --rerank learned`.
