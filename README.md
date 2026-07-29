@@ -73,24 +73,36 @@ roam business-rules summarize              # LLM 语义增强 (无 API key 自�
 roam business-rules graph                  # 构建规则图谱
 roam business-rules snapshot --label "基线" # 创建基线
 
+# 可视化与分析
+roam business-rules-flows                  # 域→流程→规则层级树
+roam dashboard-serve                       # 交互式可视化面板 (http://127.0.0.1:8765)
+roam tour --onboard --write ONBOARD.md     # 项目入门指南（含架构分层/文件地图/复杂度热点）
+
 # 改代码后
 roam business-rules extract --update       # 增量提取
-roam business-rules check                  # 冲突检测
+roam business-rules check                  # AST 冲突检测（机械对比）
 roam business-rules diff                   # 对比变更
 ```
+
+> **Hermes Skills**: 还提供两个 Hermes skill 用于宿主流式 LLM 语义分析（零 API Key）：
+> - `business-rule-summarize` — 语义增强（domain/flow/description）
+> - `business-rule-semantic-conflict` — 语义级冲突检测（发现 AST 机械对比漏掉的矛盾）
 
 ### Pipeline
 
 | 命令 | 功能 | 输出 |
 |------|------|------|
-| `extract` | AST 扫描 Java 源码，识别 8 类业务规则 | 规则统计 + by_type |
+| `extract` | AST 扫描 Java 源码，识别 8 类业务规则 + if-else 守卫 | 规则统计 + by_type |
 | `summarize` | LLM 补充业务域/流程/自然语言描述 | 增强数 + 归并数 |
 | `graph` | 构建规则间关系边 | 边统计(same_field/same_flow/conflicts_with) |
-| `check` | 检测阈值冲突/权限移除/状态机断裂 | 冲突清单 |
+| `flows` 🆕 | 域→流程→规则层级可视化 | 文本树 / Mermaid / JSON |
+| `check` | AST 检测阈值冲突/权限移除/状态机断裂 | 冲突清单 |
 | `snapshot` | 创建版本快照 | 快照 ID |
 | `diff` | 对比两个快照的规则变化 | +N/-M 变更摘要 |
 | `list` | 列出规则（支持 --type/--domain 过滤） | 规则表格 |
 | `explain` | 单条规则详情 + 关联规则 | 完整信息 + related |
+| `dashboard-serve` 🆕 | 交互式可视化面板 | Web UI (vis.js) |
+| `tour --onboard` 🆕 | 项目入门指南 | Markdown（架构分层/文件地图/复杂度热点） |
 
 ### Rule Types
 
