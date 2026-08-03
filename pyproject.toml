@@ -117,7 +117,7 @@ dev = [
     # which doesn't honour ``alpha`` and trivially fails the
     # alpha-override / chain-propagation invariants. Production users
     # without scipy still get the (less accurate but correct) fallback.
-    "scipy>=1.11",
+    "scipy>=1.15.3",
     # fastmcp is required by tests that exercise the MCP server tool
     # registry (``_TOOL_METADATA`` is empty without it because the
     # decorator becomes a no-op).
