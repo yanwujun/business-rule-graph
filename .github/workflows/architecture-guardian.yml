@@ -49,14 +49,11 @@ jobs:
 
       - name: Sync the exact runtime graph
         run: |
-          echo "Checking uv version..."
-          uv --version
-          test "$(uv --version)" = "uv 0.11.29"
-          echo "Running uv sync..."
-          uv sync --locked --no-default-groups --python python || { echo "uv sync failed"; exit 1; }
-          echo "Running uv pip check..."
-          uv pip check --python .venv/bin/python || { echo "uv pip check failed"; exit 1; }
-          echo "Sync completed successfully"
+          uv_version="$(uv version --short)"
+          echo "uv version: $uv_version"
+          test "$uv_version" = "0.11.29"
+          uv sync --locked --no-default-groups --python python
+          uv pip check --python .venv/bin/python
 
       - name: Build index
         run: |
