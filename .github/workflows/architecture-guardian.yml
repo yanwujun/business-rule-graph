@@ -49,9 +49,9 @@ jobs:
 
       - name: Sync the exact runtime graph
         run: |
-          uv_version="$(uv version --short)"
-          echo "uv version: $uv_version"
-          test "$uv_version" = "0.11.29"
+          uv_ver="$(uv --version | awk '{print $2}')"
+          echo "uv version: $uv_ver"
+          test "$uv_ver" = "0.11.29"
           uv sync --locked --no-default-groups --python python
           uv pip check --python .venv/bin/python
 
